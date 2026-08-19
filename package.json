@@ -1,0 +1,49 @@
+{
+  "name": "temp_next_app",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "eslint"
+  },
+  "dependencies": {
+    "@codesandbox/sandpack-react": "^2.20.0",
+    "@next/swc-win32-x64-msvc": "^16.2.11",
+    "@prisma/client": "^6.4.0",
+    "@types/bcryptjs": "^2.4.6",
+    "@types/canvas-confetti": "^1.9.0",
+    "@types/cors": "^2.8.19",
+    "@types/express": "^5.0.6",
+    "@types/nodemailer": "^8.0.1",
+    "@types/papaparse": "^5.5.2",
+    "@types/pdf-parse": "^1.1.5",
+    "bcryptjs": "^3.0.3",
+    "canvas-confetti": "^1.9.4",
+    "cors": "^2.8.6",
+    "express": "^5.2.1",
+    "framer-motion": "^11.18.2",
+    "lucide-react": "^0.472.0",
+    "mongodb": "^7.5.0",
+    "next": "16.2.10",
+    "nodemailer": "^9.0.3",
+    "papaparse": "^5.5.4",
+    "pdf-parse": "^2.4.5",
+    "prisma": "^6.4.0",
+    "react": "^18",
+    "react-dom": "^18",
+    "xlsx": "^0.18.5"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4",
+    "@types/node": "^20",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "eslint": "^9",
+    "eslint-config-next": "16.2.10",
+    "playwright": "^1.61.1",
+    "tailwindcss": "^4",
+    "typescript": "^5"
+  }
+}

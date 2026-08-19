@@ -1,0 +1,47 @@
+// Prisma schema for MakeMistakes (MongoDB Provider)
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mongodb"
+  url      = env("DATABASE_URL")
+}
+
+model EmailVerification {
+  id          String   @id @default(auto()) @map("_id") @db.ObjectId
+  email       String   @unique
+  otpHash     String
+  expiresAt   DateTime
+  attempts    Int      @default(0)
+  verified    Boolean  @default(false)
+  lastSentAt  DateTime @default(now())
+  hourlyCount Int      @default(1)
+  windowStart DateTime @default(now())
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model ProblemStatement {
+  id                  String   @id @default(auto()) @map("_id") @db.ObjectId
+  title               String
+  slug                String?  @unique
+  category            String?  @default("Product Design")
+  difficulty          String?  @default("Medium")
+  description         String?
+  problemDescription  String?
+  context             String?
+  targetDemographics String?
+  whyExists           String?
+  whoExperiencesIt    String?
+  whyCurrentFail      String?
+  whySolvingMatters   String?
+  impact              String?
+  opportunity         String?
+  pdfUrl              String?
+  fileUrl             String?
+  metadata            String?
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+}

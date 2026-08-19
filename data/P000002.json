@@ -1,0 +1,114 @@
+{
+  "problemId": "P000002",
+  "title": "Why are small retailers forced into distributor margins without direct brand access?",
+  "problemStatement": "Why are small retailers forced into distributor margins without direct brand access?",
+  "category": "B2B Services",
+  "difficulty": "Beginner",
+  "country": "India",
+  "source": {
+    "name": "Fix My Itch by Razorpay",
+    "type": "open_problem"
+  },
+  "relatedInformation": {
+    "context": "In India's retail ecosystem, millions of small neighborhood retailers (kirana stores) are forced to source inventory through multi-tiered distributor networks, losing 15–25% in profit margins due to lack of direct brand access and automated verification systems. Direct brand access is constrained by minimum order quantities, payment risks, and fragmented logistics.",
+    "affectedParties": [
+      "Small neighborhood retailers (kirana store owners)",
+      "Direct-to-consumer and FMCG brands seeking direct retail reach",
+      "Traditional multi-tier distributor networks"
+    ],
+    "existingGaps": [
+      "Fragmented systems and lack of automated escrow and verification for direct brand purchases",
+      "Absence of transparent real-time tracking across wholesale supply chains",
+      "High minimum order thresholds imposed by brands on individual small retailers"
+    ],
+    "opportunity": "Build a direct brand-to-retailer aggregation and escrow verification platform that bypasses middleman distributor margins while guaranteeing transaction security and transparent tracking."
+  },
+  "quiz": [
+    {
+      "id": 1,
+      "questionNumber": "01",
+      "question": "What is the primary operational bottleneck preventing small retailers from gaining direct brand access?",
+      "options": [
+        "Fragmented systems and lack of automated escrow and verification.",
+        "Excessive international import tariffs and foreign currency fluctuations.",
+        "High cost of television advertising for retail products.",
+        "Inability to secure physical retail store real estate."
+      ],
+      "correctIndex": 0,
+      "explanation": "The primary operational bottleneck is the presence of fragmented systems and the lack of automated escrow and verification, forcing small retailers to rely on distributor margins.",
+      "xp": 10
+    },
+    {
+      "id": 2,
+      "questionNumber": "02",
+      "question": "Which financial metric must be established before aggressive scaling in B2B retail platforms?",
+      "options": [
+        "Total monthly active app downloads without transaction revenue.",
+        "Positive gross margin and transaction-level unit economics.",
+        "Maximum venture capital debt financing capacity.",
+        "Gross merchandise value growth regardless of cash burn."
+      ],
+      "correctIndex": 1,
+      "explanation": "Achieving positive gross margins and solid transaction-level unit economics is essential before pursuing aggressive market scaling.",
+      "xp": 10
+    },
+    {
+      "id": 3,
+      "questionNumber": "03",
+      "question": "What is the effect of real-time transparent tracking on user behavior in B2B supply chains?",
+      "options": [
+        "Increased trust and retention by reducing operational uncertainty.",
+        "Decreased buyer interest due to information overload.",
+        "Higher cancellation rates on orders during transit.",
+        "Immediate shift of orders to traditional offline distributors."
+      ],
+      "correctIndex": 0,
+      "explanation": "Providing real-time transparent tracking eliminates operational uncertainty, which directly boosts buyer trust and platform retention.",
+      "xp": 10
+    },
+    {
+      "id": 4,
+      "questionNumber": "04",
+      "question": "What is the key lesson learned from historical market analysis for retail platforms?",
+      "options": [
+        "Expand to all major geographic markets simultaneously.",
+        "Validate customer retention and the core value proposition before blitzscaling.",
+        "Subsidize distributor margins indefinitely to drive volume.",
+        "Avoid building automated verification software."
+      ],
+      "correctIndex": 1,
+      "explanation": "Historical analysis proves that platforms must validate customer retention and the core value proposition before attempting blitzscaling.",
+      "xp": 10
+    },
+    {
+      "id": 5,
+      "questionNumber": "05",
+      "question": "Which technology component enables secure conditional release of funds upon verified delivery?",
+      "options": [
+        "Automated escrow smart contracts and webhook triggers.",
+        "Manual wire transfers verified via telephone calls.",
+        "Static paper invoices mailed after delivery.",
+        "Third-party social media messaging bots."
+      ],
+      "correctIndex": 0,
+      "explanation": "Automated escrow smart contracts and webhook triggers provide the security and conditional logic needed for automated payment releases.",
+      "xp": 10
+    }
+  ],
+  "metadata": {
+    "itchScore": 76,
+    "sector": "B2B Services",
+    "country": "India",
+    "years": {
+      "start": null,
+      "end": null
+    },
+    "funding": null,
+    "originalStartup": null,
+    "failureReason": null,
+    "level": "Beginner"
+  },
+  "status": "published",
+  "createdAt": "2026-08-11T00:00:00.000Z",
+  "updatedAt": "2026-08-11T00:00:00.000Z"
+}

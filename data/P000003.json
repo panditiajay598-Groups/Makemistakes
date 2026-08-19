@@ -1,0 +1,114 @@
+{
+  "problemId": "P000003",
+  "title": "Why do micro-SMEs waste 10+ hours weekly on invoice management?",
+  "problemStatement": "Why do micro-SMEs waste 10+ hours weekly on invoice management?",
+  "category": "B2B Services",
+  "difficulty": "Beginner",
+  "country": "India",
+  "source": {
+    "name": "Fix My Itch by Razorpay",
+    "type": "open_problem"
+  },
+  "relatedInformation": {
+    "context": "Micro-SMEs in India spend more than 10 hours weekly manually tracking unpaid invoices, matching bank receipts, and following up via WhatsApp and phone calls due to lack of automated billing and verification software.",
+    "affectedParties": [
+      "Micro-SME owners and accounts staff",
+      "Small enterprise buyers",
+      "Freelance accountants"
+    ],
+    "existingGaps": [
+      "Fragmented systems and lack of automated escrow and verification",
+      "Manual offline payment reconciliation",
+      "Lack of real-time tracking for unpaid invoice status"
+    ],
+    "opportunity": "Build a streamlined invoice management and automated escrow platform tailored for micro-SMEs that reduces weekly administrative overhead."
+  },
+  "quiz": [
+    {
+      "id": 1,
+      "questionNumber": "01",
+      "question": "What is the primary operational bottleneck identified in 'Why do micro-SMEs waste 10+ hours weekly on invoice management?'?",
+      "options": [
+        "Fragmented systems and lack of automated escrow and verification",
+        "Excessive global hardware shipping taxes",
+        "Slower consumer smartphone internet speeds",
+        "Lack of available social media advertising channels"
+      ],
+      "correctIndex": 0,
+      "explanation": "Fragmented workflows and lack of automated verification create severe transaction friction and trust deficit.",
+      "xp": 10
+    },
+    {
+      "id": 2,
+      "questionNumber": "02",
+      "question": "Which financial metric is most critical before aggressively scaling a solution for this problem?",
+      "options": [
+        "Maximizing gross ad spend regardless of margins",
+        "Achieving positive gross margin and unit economics on individual transactions",
+        "Offering 100% free services permanently",
+        "Relying entirely on one-time referral bonuses"
+      ],
+      "correctIndex": 1,
+      "explanation": "Scaling without positive transaction-level unit economics rapidly consumes capital and leads to failure.",
+      "xp": 10
+    },
+    {
+      "id": 3,
+      "questionNumber": "03",
+      "question": "How does implementing real-time transparent tracking impact user behavior?",
+      "options": [
+        "It increases trust and retention by reducing operational uncertainty",
+        "It forces customers to abandon mobile applications",
+        "It increases customer churn by 50%",
+        "It mandates daily manual phone calls"
+      ],
+      "correctIndex": 0,
+      "explanation": "Real-time visibility reduces user anxiety and strengthens platform trust and engagement.",
+      "xp": 10
+    },
+    {
+      "id": 4,
+      "questionNumber": "04",
+      "question": "What key takeaway emerges from historical market analysis in B2B Services?",
+      "options": [
+        "Marketing spend can overcome broken unit economics",
+        "Customer retention and core value proposition must be validated before blitzscaling",
+        "Legacy paper-based systems are superior to cloud software",
+        "Single-channel marketing is always optimal"
+      ],
+      "correctIndex": 1,
+      "explanation": "Validating retention and product-market fit is necessary before spending heavily on acquisition.",
+      "xp": 10
+    },
+    {
+      "id": 5,
+      "questionNumber": "05",
+      "question": "Which technology component ensures secure, conditional release of funds upon milestone completion?",
+      "options": [
+        "Automated escrow smart contracts and webhook triggers",
+        "Static PDF email attachments",
+        "Unencrypted paper receipts",
+        "Manual cash-on-delivery logging"
+      ],
+      "correctIndex": 0,
+      "explanation": "Automated escrows release funds conditionally only when pre-defined milestone criteria are verified.",
+      "xp": 10
+    }
+  ],
+  "metadata": {
+    "itchScore": 75,
+    "sector": "B2B Services",
+    "country": "India",
+    "years": {
+      "start": null,
+      "end": null
+    },
+    "funding": null,
+    "originalStartup": null,
+    "failureReason": null,
+    "level": "Beginner"
+  },
+  "status": "published",
+  "createdAt": "2026-08-11T00:00:00.000Z",
+  "updatedAt": "2026-08-11T00:00:00.000Z"
+}

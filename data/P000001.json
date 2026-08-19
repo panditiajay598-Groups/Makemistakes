@@ -1,0 +1,115 @@
+{
+  "problemId": "P000001",
+  "title": "Why do freelancers ghost projects after partial payments without accountability systems?",
+  "problemStatement": "Why do freelancers ghost projects after partial payments without accountability systems?",
+  "category": "B2B Services",
+  "difficulty": null,
+  "country": "India",
+  "source": {
+    "name": "Fix My Itch by Razorpay",
+    "type": "open_problem"
+  },
+  "relatedInformation": {
+    "context": "In India's rapidly growing freelance economy, businesses and individual clients routinely pay 30–50% upfront to freelancers (designers, developers, writers, marketers) before project delivery. However, there is no enforceable, lightweight accountability mechanism in place. When a freelancer disappears mid-project, the client loses both money and time. Freelance marketplaces typically lack milestone-based escrow systems, dispute resolution workflows, or identity-verified portfolios. This creates an asymmetric risk where clients bear 100% of the financial risk at the start of an engagement.",
+    "affectedParties": [
+      "Small and medium businesses hiring freelancers",
+      "Individual clients commissioning freelance work",
+      "Freelancers with legitimate reputations (damaged by trust collapse)",
+      "Platform operators without dispute resolution infrastructure"
+    ],
+    "existingGaps": [
+      "No milestone-locked payment escrow for Indian freelance contracts",
+      "No enforceable delivery timelines for partial-payment engagements",
+      "No lightweight identity verification or reputation staking for freelancers",
+      "No automated caregiver-style escalation when milestones are missed"
+    ],
+    "opportunity": "Build a milestone-based freelance accountability platform with escrow payments, verifiable reputation staking, and automated deadline alerting — so clients never lose money to ghosted projects and freelancers can build verified, trustworthy professional identities."
+  },
+  "quiz": [
+    {
+      "id": 1,
+      "questionNumber": "01",
+      "question": "What is the core problem in the Indian freelance market described in this problem statement?",
+      "options": [
+        "Freelancers ghost projects after receiving partial upfront payments, with no accountability system in place.",
+        "Clients refuse to pay freelancers on time, causing project delays.",
+        "Freelance platforms charge excessive commissions on completed project payments.",
+        "Freelancers struggle to find clients due to lack of marketing tools."
+      ],
+      "correctIndex": 0,
+      "explanation": "The problem is specifically about freelancers disappearing after receiving partial upfront payments, with no enforceable accountability or dispute resolution system available to protect clients.",
+      "xp": 10
+    },
+    {
+      "id": 2,
+      "questionNumber": "02",
+      "question": "Which payment structure creates the highest financial risk for clients in freelance engagements?",
+      "options": [
+        "Paying 30–50% upfront before any deliverable is received, with no escrow or milestone enforcement.",
+        "Paying 100% after full project completion and client approval.",
+        "Paying via a milestone-locked escrow that releases funds upon verified delivery.",
+        "Paying through a third-party dispute resolution platform with verified contracts."
+      ],
+      "correctIndex": 0,
+      "explanation": "Paying 30–50% upfront with no escrow or delivery enforcement puts clients at maximum financial risk because freelancers receive funds before any accountability mechanism is activated.",
+      "xp": 10
+    },
+    {
+      "id": 3,
+      "questionNumber": "03",
+      "question": "What is the PRIMARY gap in existing Indian freelance marketplaces that enables project ghosting?",
+      "options": [
+        "Absence of milestone-based escrow systems, dispute resolution workflows, and identity-verified portfolios.",
+        "Lack of video call tools for remote freelancer-client communication.",
+        "Insufficient number of registered freelancers on Indian platforms.",
+        "High platform transaction fees that discourage freelancers from completing work."
+      ],
+      "correctIndex": 0,
+      "explanation": "The key gap is structural: Indian freelance platforms lack milestone-locked escrow, enforced delivery timelines, and verified freelancer identities — making ghosting a low-risk action for bad actors.",
+      "xp": 10
+    },
+    {
+      "id": 4,
+      "questionNumber": "04",
+      "question": "Who bears the HIGHEST financial risk when a freelancer ghosts a project after a partial upfront payment?",
+      "options": [
+        "The client, who loses 30–50% of the project budget with no recourse or dispute mechanism.",
+        "The freelancer platform, which must refund all failed projects from its own reserve fund.",
+        "The freelancer, who loses all future work from the same client.",
+        "The government, which must compensate clients through a digital freelance protection fund."
+      ],
+      "correctIndex": 0,
+      "explanation": "Clients bear 100% of the financial risk at the start of an engagement. They lose their upfront payment with no enforceable dispute mechanism, delivery timeline, or identity-verified contact for the freelancer.",
+      "xp": 10
+    },
+    {
+      "id": 5,
+      "questionNumber": "05",
+      "question": "What product opportunity does this problem create for a startup or product team?",
+      "options": [
+        "A milestone-based freelance accountability platform with escrow payments, verified reputation staking, and automated deadline alerts.",
+        "A social media app for freelancers to share their portfolio work publicly.",
+        "A job board aggregator that lists freelance gigs from multiple Indian platforms.",
+        "A tax filing tool that helps freelancers calculate GST on their project invoices."
+      ],
+      "correctIndex": 0,
+      "explanation": "The opportunity is to build a trust infrastructure layer: escrow-backed milestone payments + verifiable freelancer reputation + automated escalation when deadlines are missed — directly solving the ghosting problem.",
+      "xp": 10
+    }
+  ],
+  "metadata": {
+    "itchScore": null,
+    "sector": "B2B Services",
+    "country": "India",
+    "years": {
+      "start": null,
+      "end": null
+    },
+    "funding": null,
+    "originalStartup": null,
+    "failureReason": null
+  },
+  "status": "active",
+  "createdAt": "2026-08-11T00:00:00.000Z",
+  "updatedAt": "2026-08-11T00:00:00.000Z"
+}
