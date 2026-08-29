@@ -117,6 +117,8 @@ export async function GET(req: Request) {
         exists: false,
         userId,
         problemId,
+        currentPhase: 1,
+        status: "in_progress",
         phases: DEFAULT_PHASES,
       });
     }
@@ -130,8 +132,11 @@ export async function GET(req: Request) {
       exists: true,
       userId: journey.userId,
       problemId: journey.problemId,
+      currentPhase: typeof journey.currentPhase === "number" ? journey.currentPhase : 1,
       status: journey.status || "in_progress",
       phases: mergedPhases,
+      lastSavedAt: journey.lastSavedAt || journey.updatedAt,
+      lastActivityAt: journey.lastActivityAt || journey.updatedAt,
       updatedAt: journey.updatedAt,
     });
   } catch (err: any) {
@@ -149,11 +154,13 @@ export async function POST(req: Request) {
     const userId = (body.userId || "default_user").toString().trim().toLowerCase();
     const problemId = (body.problemId || "").toString().trim();
     const phase = (body.phase || "").toString().trim().toLowerCase();
+    const currentPhase = typeof body.currentPhase === "number" ? body.currentPhase : (body.currentPhase ? parseInt(body.currentPhase, 10) : null);
     const data = body.data;
+    const customStatus = body.status;
 
-    if (!problemId || !phase) {
+    if (!problemId) {
       return NextResponse.json(
-        { error: "Missing required 'problemId' or 'phase' parameter" },
+        { error: "Missing required 'problemId' parameter" },
         { status: 400 }
       );
     }
@@ -162,15 +169,31 @@ export async function POST(req: Request) {
     client = res.client;
 
     const now = new Date();
+    const setFields: Record<string, any> = {
+      userId,
+      problemId,
+      lastSavedAt: now,
+      lastActivityAt: now,
+      updatedAt: now,
+    };
+
+    if (phase && data !== undefined) {
+      setFields[`phases.${phase}`] = data;
+    }
+
+    if (currentPhase && currentPhase >= 1 && currentPhase <= 9) {
+      setFields.currentPhase = currentPhase;
+    }
+
+    if (customStatus) {
+      setFields.status = customStatus;
+    } else {
+      setFields.status = "in_progress";
+    }
+
     const updateQuery = {
-      $set: {
-        userId,
-        problemId,
-        [`phases.${phase}`]: data,
-        updatedAt: now,
-      },
+      $set: setFields,
       $setOnInsert: {
-        status: "in_progress",
         createdAt: now,
       },
     };
@@ -187,7 +210,9 @@ export async function POST(req: Request) {
       success: true,
       userId,
       problemId,
-      phase,
+      phase: phase || null,
+      currentPhase: currentPhase || null,
+      lastSavedAt: now,
       updatedAt: now,
       upserted: result.upsertedCount > 0,
     });

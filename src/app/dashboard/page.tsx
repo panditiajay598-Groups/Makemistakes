@@ -33,10 +33,10 @@ export default function BuildOSPage() {
   const navItems = [
     { id: "buildos",   label: "BuildOS",          icon: LayoutDashboard, href: "/dashboard" },
     { id: "journey",   label: "Product Journey",  icon: Map,             href: "/dashboard/journey" },
-    { id: "products",  label: "Products",          icon: Globe,           href: "#" },
-    { id: "portfolio", label: "Portfolio",         icon: ShieldCheck,     href: "#" },
+    { id: "products",  label: "Products",          icon: Globe,           href: "/dashboard/products" },
+    { id: "portfolio", label: "Portfolio",         icon: ShieldCheck,     href: "/dashboard/portfolio" },
     { id: "network",   label: "Builder Network",   icon: Users,           href: "#" },
-    { id: "settings",  label: "Settings",          icon: Settings,        href: "#" },
+    { id: "settings",  label: "Settings",          icon: Settings,        href: "/dashboard/settings" },
   ];
 
   const userInitial = profile?.whoAreYouRole?.charAt(0)?.toUpperCase() ?? "N";
@@ -152,7 +152,7 @@ export default function BuildOSPage() {
             </p>
 
             {/* CTA */}
-            <div className="mt-7">
+            <div className="mt-7 flex items-center justify-center gap-3">
               <button
                 id="start-building-btn"
                 onClick={async () => {
@@ -163,7 +163,7 @@ export default function BuildOSPage() {
                     if (res.ok) {
                       const data = await res.json();
                       if (data.problemId) {
-                        window.location.href = `/journey/${data.problemId}?step=1`;
+                        window.location.href = `/journey/${data.problemId}?step=${data.currentPhase || 1}`;
                         return;
                       }
                     }
@@ -175,6 +175,13 @@ export default function BuildOSPage() {
                 Start Building
                 <ArrowRight className="h-4 w-4" />
               </button>
+
+              <a
+                href="/onboarding?reset=true"
+                className="inline-flex items-center gap-1 px-4 py-2.5 rounded-full bg-zinc-100 hover:bg-zinc-200 text-zinc-700 text-xs font-mono font-semibold transition-all cursor-pointer"
+              >
+                Restart Onboarding ↺
+              </a>
             </div>
 
           </div>

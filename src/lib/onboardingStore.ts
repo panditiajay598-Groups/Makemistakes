@@ -6,6 +6,8 @@ export interface DailyStandupData {
 }
 
 export interface UserOnboardingProfile {
+  onboardingStep?: number;
+  onboardingAnswers?: Record<string, any>;
   onboardingCompleted: boolean;
   foundingJourneyCompleted: boolean;
   welcomeCompleted?: boolean;
@@ -73,6 +75,8 @@ export interface UserOnboardingProfile {
 const STORAGE_KEY = "makemistakes_user_onboarding";
 
 const DEFAULT_PROFILE: UserOnboardingProfile = {
+  onboardingStep: 1,
+  onboardingAnswers: {},
   onboardingCompleted: false,
   foundingJourneyCompleted: false,
   mission0Completed: false,

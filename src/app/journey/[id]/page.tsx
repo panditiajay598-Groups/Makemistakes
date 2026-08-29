@@ -32,14 +32,15 @@ import ProblemCompletionModal from "@/components/journey/ProblemCompletionModal"
 
 type JourneyStep = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9;
 
-function journeyStepStorageKey(problemId: string) {
-  return `makemistakes_journey_v2_step_${problemId}`;
+function journeyStepStorageKey(userId: string, problemId: string) {
+  const cleanUser = (userId || "default_user").toString().trim().toLowerCase();
+  return `makemistakes_journey_v2_step_${cleanUser}_${problemId}`;
 }
 
-function loadJourneyStep(problemId: string): JourneyStep {
+function loadJourneyStep(userId: string, problemId: string): JourneyStep {
   if (typeof window === "undefined") return 1;
   try {
-    const raw = localStorage.getItem(journeyStepStorageKey(problemId));
+    const raw = localStorage.getItem(journeyStepStorageKey(userId, problemId));
     const n = raw ? parseInt(raw, 10) : NaN;
     if (n >= 1 && n <= 9) return n as JourneyStep;
   } catch {
@@ -48,10 +49,10 @@ function loadJourneyStep(problemId: string): JourneyStep {
   return 1;
 }
 
-function saveJourneyStep(problemId: string, step: JourneyStep) {
+function saveJourneyStep(userId: string, problemId: string, step: JourneyStep) {
   if (typeof window === "undefined") return;
   try {
-    localStorage.setItem(journeyStepStorageKey(problemId), String(step));
+    localStorage.setItem(journeyStepStorageKey(userId, problemId), String(step));
   } catch {
     /* ignore */
   }
@@ -97,15 +98,15 @@ export default function GenericProblemJourneyPage() {
   }, [router]);
 
   // One-time localStorage cleanup: remove ALL old v1 storage keys.
-  // Keep v2/v3 keys (phase data, build progress, journey step).
   useEffect(() => {
-    try {
-      const CLEANUP_DONE_KEY = "makemistakes_storage_v3_cleaned";
-      if (localStorage.getItem(CLEANUP_DONE_KEY)) return;
+    if (typeof window === "undefined") return;
+    const CLEANUP_DONE_KEY = "mmp_v1_cleanup_completed_v2";
+    if (localStorage.getItem(CLEANUP_DONE_KEY) === "true") return;
 
+    try {
       let removed = 0;
       Object.keys(localStorage)
-        .filter((k) => k.startsWith("makemistakes_") && k !== CLEANUP_DONE_KEY)
+        .filter((k) => k.startsWith("makemistakes_"))
         .forEach((k) => {
           const keep =
             k.includes("_v2_") ||
@@ -115,28 +116,50 @@ export default function GenericProblemJourneyPage() {
           if (!keep) {
             localStorage.removeItem(k);
             removed++;
-            console.info(`[MMP Cleanup] Purged old v1 key: ${k}`);
           }
         });
 
       localStorage.setItem(CLEANUP_DONE_KEY, "true");
-      if (removed > 0) {
-        console.info(`[MMP Cleanup] Purged ${removed} old v1 localStorage entries. Fresh start for all phases.`);
-      }
     } catch (e) {
       console.warn("[MMP Cleanup] localStorage cleanup failed:", e);
     }
   }, []);
 
-  // Fetch problem details + restore last journey step for this problem (refresh-safe)
+  // Fetch problem details + restore last journey step for this problem (refresh-safe & server-synced)
   useEffect(() => {
     if (!targetId) return;
     let isSubscribed = true;
 
-    async function fetchProblem() {
+    async function fetchProblemAndJourney() {
       try {
         setFetchError(null);
-        const res = await fetch(`/api/journey/problem?id=${encodeURIComponent(targetId!)}`);
+
+        // Check URL query parameters (e.g. ?step=1 or ?reset=true)
+        let hasExplicitUrlStep = false;
+        let urlStepVal: JourneyStep = 1;
+
+        if (typeof window !== "undefined") {
+          const urlParams = new URLSearchParams(window.location.search);
+          const urlStep = urlParams.get("step");
+          const isReset = urlParams.get("reset") === "true";
+
+          if (isReset) {
+            hasExplicitUrlStep = true;
+            urlStepVal = 1;
+            clearProblemJourneyData(targetId);
+            saveJourneyStep(userId, targetId, 1);
+          } else if (urlStep && !isNaN(parseInt(urlStep, 10))) {
+            const parsed = parseInt(urlStep, 10);
+            if (parsed >= 1 && parsed <= 9) {
+              hasExplicitUrlStep = true;
+              urlStepVal = parsed as JourneyStep;
+              saveJourneyStep(userId, targetId, urlStepVal);
+            }
+          }
+        }
+
+        // 1. Fetch problem content details
+        const res = await fetch(`/api/journey/problem?id=${encodeURIComponent(targetId!)}&userId=${encodeURIComponent(userId)}`);
         if (res.ok && isSubscribed) {
           const data = await res.json();
           setProblemData(data);
@@ -148,6 +171,27 @@ export default function GenericProblemJourneyPage() {
           const errData = await res.json().catch(() => ({}));
           setFetchError(errData.error || `Problem '${targetId}' was not found.`);
         }
+
+        // 2. Fetch server user journey state to resolve exact currentPhase
+        let serverStep: JourneyStep = 1;
+        try {
+          const uRes = await fetch(`/api/journey/user-data?userId=${encodeURIComponent(userId)}&problemId=${encodeURIComponent(targetId!)}`);
+          if (uRes.ok) {
+            const uData = await uRes.json();
+            if (typeof uData.currentPhase === "number" && uData.currentPhase >= 1 && uData.currentPhase <= 9) {
+              serverStep = uData.currentPhase as JourneyStep;
+            }
+          }
+        } catch (uErr) {
+          console.warn("[JourneyPage] Server user-data load warning:", uErr);
+        }
+
+        if (isSubscribed) {
+          const finalStep = hasExplicitUrlStep ? urlStepVal : (serverStep || loadJourneyStep(userId, targetId!));
+          setCurrentStep(finalStep);
+          saveJourneyStep(userId, targetId!, finalStep);
+          setStepHydrated(true);
+        }
       } catch {
         if (isSubscribed) {
           setFetchError("Failed to connect to problem database.");
@@ -157,59 +201,68 @@ export default function GenericProblemJourneyPage() {
 
     setStepHydrated(false);
     setProblemData(null);
-
-    // Check URL query parameters (e.g. ?step=1 or ?reset=true)
-    let initialStep: JourneyStep = 1;
-    if (typeof window !== "undefined") {
-      const urlParams = new URLSearchParams(window.location.search);
-      const urlStep = urlParams.get("step");
-      const isReset = urlParams.get("reset") === "true";
-
-      if (isReset) {
-        initialStep = 1;
-        clearProblemJourneyData(targetId);
-        saveJourneyStep(targetId, 1);
-      } else if (urlStep && !isNaN(parseInt(urlStep, 10))) {
-        const parsed = parseInt(urlStep, 10);
-        if (parsed >= 1 && parsed <= 9) {
-          initialStep = parsed as JourneyStep;
-          saveJourneyStep(targetId, initialStep);
-        }
-      } else {
-        initialStep = loadJourneyStep(targetId);
-      }
-    } else {
-      initialStep = loadJourneyStep(targetId);
-    }
-
-    setCurrentStep(initialStep);
-    setStepHydrated(true);
-    fetchProblem();
+    fetchProblemAndJourney();
     window.scrollTo({ top: 0, behavior: "smooth" });
 
     return () => {
       isSubscribed = false;
     };
-  }, [targetId]);
+  }, [targetId, userId]);
 
-  // Persist current step whenever it changes (after hydrate)
+  // Listen for browser Back/Forward navigation (popstate)
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    const handlePopState = () => {
+      const urlParams = new URLSearchParams(window.location.search);
+      const urlStep = urlParams.get("step");
+      if (urlStep && !isNaN(parseInt(urlStep, 10))) {
+        const parsed = parseInt(urlStep, 10);
+        if (parsed >= 1 && parsed <= 9) {
+          setCurrentStep(parsed as JourneyStep);
+        }
+      }
+    };
+
+    window.addEventListener("popstate", handlePopState);
+    return () => {
+      window.removeEventListener("popstate", handlePopState);
+    };
+  }, []);
+
+  // Persist current step whenever it changes (sync both localStorage & MongoDB)
   useEffect(() => {
     if (!targetId || !stepHydrated) return;
-    saveJourneyStep(targetId, currentStep);
+    saveJourneyStep(userId, targetId, currentStep);
+
+    // Sync to Server MongoDB user_journeys record
+    fetch("/api/journey/user-data", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        userId,
+        problemId: targetId,
+        currentPhase: currentStep,
+      }),
+    }).catch((err) => console.warn("[JourneyPage] Server step sync warning:", err));
+
     if (typeof window !== "undefined") {
       const url = new URL(window.location.href);
-      url.searchParams.set("step", String(currentStep));
-      window.history.replaceState(null, "", url.toString());
+      const currentUrlStep = url.searchParams.get("step");
+      if (currentUrlStep !== String(currentStep)) {
+        url.searchParams.set("step", String(currentStep));
+        window.history.pushState({ step: currentStep }, "", url.toString());
+      }
     }
-  }, [targetId, currentStep, stepHydrated]);
+  }, [targetId, currentStep, stepHydrated, userId]);
 
   const navItems = [
     { id: "buildos",   label: "BuildOS",          icon: LayoutDashboard, href: "/dashboard" },
     { id: "journey",   label: "Product Journey",  icon: Map,             href: "/dashboard/journey" },
-    { id: "products",  label: "Products",          icon: Globe,           href: "#" },
-    { id: "portfolio", label: "Portfolio",         icon: ShieldCheck,     href: "#" },
+    { id: "products",  label: "Products",          icon: Globe,           href: "/dashboard/products" },
+    { id: "portfolio", label: "Portfolio",         icon: ShieldCheck,     href: "/dashboard/portfolio" },
     { id: "network",   label: "Builder Network",   icon: Users,           href: "#" },
-    { id: "settings",  label: "Settings",          icon: Settings,        href: "#" },
+    { id: "settings",  label: "Settings",          icon: Settings,        href: "/dashboard/settings" },
   ];
 
   const userInitial = profile?.whoAreYouRole?.charAt(0)?.toUpperCase() ?? "N";
@@ -466,6 +519,7 @@ export default function GenericProblemJourneyPage() {
               {currentStep === 5 && (
                 <BuildPhase
                   key={rawId}
+                  userId={userId}
                   problemData={problemData}
                   onComplete={nextStep}
                   onBackToJourney={() => router.push("/dashboard/journey")}

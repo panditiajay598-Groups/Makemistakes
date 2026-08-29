@@ -34,6 +34,15 @@ export async function POST(req: Request) {
     const problemsCollection = db.collection("problems");
     const completionsCollection = db.collection("problem_completions");
 
+    try {
+      await completionsCollection.createIndex(
+        { userId: 1, problemId: 1 },
+        { unique: true, background: true }
+      );
+    } catch (idxErr) {
+      console.warn("[problem_completions] Index warning:", idxErr);
+    }
+
     // Mark current problem completed for THIS user only
     await completionsCollection.updateOne(
       { userId, problemId: currentId },

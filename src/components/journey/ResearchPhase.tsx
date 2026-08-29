@@ -257,6 +257,48 @@ export default function ResearchPhase({
     setTimeout(() => setIsSaved(false), 2500);
   };
 
+  const handleAddOrUpdateSource = () => {
+    if (!urlInput.trim()) {
+      setUrlError("Please enter a research URL.");
+      return;
+    }
+    const cleaned = validateAndCleanUrl(urlInput);
+    if (!cleaned) {
+      setUrlError("Please enter a valid URL (e.g. https://google.com or github.com)");
+      return;
+    }
+    setUrlError("");
+
+    let updated: string[];
+    if (editingIndex !== null) {
+      updated = [...sources];
+      updated[editingIndex] = cleaned;
+      setEditingIndex(null);
+    } else {
+      updated = [...sources, cleaned];
+    }
+
+    setSources(updated);
+    setUrlInput("");
+    persistData(updated, answers, checklist, attachedResources);
+  };
+
+  const handleEditSource = (index: number) => {
+    setEditingIndex(index);
+    setUrlInput(sources[index] || "");
+    setUrlError("");
+  };
+
+  const handleRemoveSource = (index: number) => {
+    const updated = sources.filter((_, i) => i !== index);
+    setSources(updated);
+    if (editingIndex === index) {
+      setEditingIndex(null);
+      setUrlInput("");
+    }
+    persistData(updated, answers, checklist, attachedResources);
+  };
+
   const handleAddResource = () => {
     if (!showResourceInput || !resourceValue.trim()) return;
     const newRes = {

@@ -387,6 +387,18 @@ export default function DeveloperIdentityFlow({
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [currentStepIndex, selectedOptionId, answers]);
 
+  // Hydrate previously saved answers from onboardingStore on mount
+  useEffect(() => {
+    try {
+      const prof = getOnboardingProfile();
+      if (prof?.onboardingAnswers?.developerIdentity) {
+        setAnswers(prof.onboardingAnswers.developerIdentity);
+      }
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
   // Keep selectedOptionId synced when navigating steps
   useEffect(() => {
     const stepKeys: (keyof DeveloperIdentityResponses)[] = [
@@ -408,10 +420,35 @@ export default function DeveloperIdentityFlow({
     } else {
       setSelectedOptionId(null);
     }
-  }, [currentStepIndex]);
+  }, [currentStepIndex, answers]);
 
   const handleSelectOption = (option: OptionCard) => {
     setSelectedOptionId(option.id);
+    const stepKeys: (keyof DeveloperIdentityResponses)[] = [
+      "futureVision",
+      "engineeringPersonality",
+      "weekendBuild",
+      "debuggingMindset",
+      "learningStyle",
+      "successDefinition",
+    ];
+    const currentKey = stepKeys[currentStepIndex];
+    if (currentKey) {
+      const updatedAnswers = { ...answers, [currentKey]: option.title };
+      setAnswers(updatedAnswers);
+      try {
+        const prof = getOnboardingProfile();
+        saveOnboardingProfile({
+          onboardingStep: 2,
+          onboardingAnswers: {
+            ...(prof?.onboardingAnswers || {}),
+            developerIdentity: updatedAnswers,
+          },
+        });
+      } catch {
+        /* ignore */
+      }
+    }
   };
 
   const handleContinue = () => {
@@ -435,6 +472,18 @@ export default function DeveloperIdentityFlow({
       [currentKey]: selectedOption.title,
     };
     setAnswers(updatedAnswers);
+    try {
+      const prof = getOnboardingProfile();
+      saveOnboardingProfile({
+        onboardingStep: 2,
+        onboardingAnswers: {
+          ...(prof?.onboardingAnswers || {}),
+          developerIdentity: updatedAnswers,
+        },
+      });
+    } catch {
+      /* ignore */
+    }
 
     if (currentStepIndex < steps.length - 1) {
       setCurrentStepIndex((prev) => prev + 1);

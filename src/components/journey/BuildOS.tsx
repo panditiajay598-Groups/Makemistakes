@@ -165,8 +165,10 @@ export default function BuildOS({ problemId, productName: propName, problemData,
     pushLog("Saving workspace files...");
 
     // 1. Force save active file in editor to disk FIRST
+    let currentWorkspaceFiles: Record<string, string> = {};
     try {
-      if (activePath && content) {
+      if (activePath && content !== undefined) {
+        currentWorkspaceFiles[activePath] = content;
         await fetch("/api/buildos/files", {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
@@ -181,12 +183,16 @@ export default function BuildOS({ problemId, productName: propName, problemData,
     setRuntimeState("STARTING");
     pushLog("Starting project runtime...");
 
-    // 2. Execute build & compile preview payload
+    // 2. Execute build & compile preview payload using user's current workspace
     try {
       const res = await fetch("/api/buildos/run", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ userId, problemId }),
+        body: JSON.stringify({
+          userId,
+          problemId,
+          files: currentWorkspaceFiles,
+        }),
       });
       const data = await res.json();
       if (!data.ok) {
@@ -212,7 +218,7 @@ export default function BuildOS({ problemId, productName: propName, problemData,
       setRunError(err.message || String(err));
       pushLog(err.message || String(err));
     }
-  }, [userId, problemId, activePath, content, runtimeState, pushLog]);
+  }, [userId, problemId, activePath, content, runtimeState, workspaceId, pushLog]);
 
   const ensure = useCallback(async () => {
     setPhase("booting");
@@ -296,7 +302,8 @@ export default function BuildOS({ problemId, productName: propName, problemData,
     const mission = workspace.missions[stepIdx];
     if (!mission) return;
 
-    // Sync scaffold files for this step to workspace disk
+    // Only seed scaffold files if they do NOT exist on disk yet
+    // Existing user code must NEVER be overwritten by template files
     const stepFiles = workspace.fileContents[mission.id] || {};
     for (const [relPath, fileCode] of Object.entries(stepFiles)) {
       const targetPath =
@@ -306,16 +313,26 @@ export default function BuildOS({ problemId, productName: propName, problemData,
           ? relPath
           : `app/${relPath}`;
 
-      await fetch("/api/buildos/files", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          userId,
-          problemId,
-          path: targetPath,
-          content: fileCode,
-        }),
-      });
+      try {
+        const checkRes = await fetch(
+          `/api/buildos/files?userId=${encodeURIComponent(userId)}&problemId=${encodeURIComponent(problemId)}&path=${encodeURIComponent(targetPath)}`
+        );
+        if (!checkRes.ok) {
+          // File does not exist on disk yet, write initial scaffold
+          await fetch("/api/buildos/files", {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              userId,
+              problemId,
+              path: targetPath,
+              content: fileCode,
+            }),
+          });
+        }
+      } catch (e) {
+        console.warn(`Failed to check/seed file ${targetPath}:`, e);
+      }
     }
 
     // Refresh file tree

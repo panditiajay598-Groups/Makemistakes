@@ -29,15 +29,20 @@ interface GitHubPushPhaseProps {
   onComplete: () => void;
   onBackToJourney?: () => void;
   problemData?: ProblemData | null;
+  userId?: string;
 }
 
 export default function GitHubPushPhase({
   onComplete,
   onBackToJourney,
   problemData,
+  userId,
 }: GitHubPushPhaseProps) {
   const workspace = useMemo(() => deriveBuildWorkspace(problemData), [problemData]);
-  const defaultRepoName = `${workspace.productSlug || "product"}-mvp`;
+  const pid = problemData?.problemId ?? "P000001";
+  const effectiveUserId = (userId || "default_user").toString().trim().toLowerCase();
+
+  const defaultRepoName = `makemistakes-${pid.toLowerCase()}`;
 
   const [repoName, setRepoName] = useState(defaultRepoName);
   const [description, setDescription] = useState(
@@ -47,10 +52,40 @@ export default function GitHubPushPhase({
   const [commitMsg, setCommitMsg] = useState("feat: initial MVP release via MakeMistakes BuildOS");
   const [showReadmePreview, setShowReadmePreview] = useState(false);
 
-  // Push State Machine
-  const [pushState, setPushState] = useState<"IDLE" | "PREPARING" | "COMMITTING" | "PUSHED">("IDLE");
+  // GitHub Connection & Push State
+  const [isConnected, setIsConnected] = useState(false);
+  const [githubUsername, setGithubUsername] = useState<string | null>(null);
+  const [githubAvatarUrl, setGithubAvatarUrl] = useState<string | null>(null);
+
+  const [pushState, setPushState] = useState<"IDLE" | "PREPARING" | "COMMITTING" | "PUSHED" | "ERROR">("IDLE");
   const [pushedUrl, setPushedUrl] = useState<string | null>(null);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+
+  // Load connection status from Server API
+  React.useEffect(() => {
+    async function checkStatus() {
+      try {
+        const res = await fetch(`/api/journey/user-data?userId=${encodeURIComponent(effectiveUserId)}&problemId=${encodeURIComponent(pid)}`);
+        if (res.ok) {
+          const json = await res.json();
+          const dData = json?.phases?.deploy;
+          if (dData?.githubUsername) {
+            setIsConnected(true);
+            setGithubUsername(dData.githubUsername);
+            setGithubAvatarUrl(dData.githubAvatarUrl || null);
+          }
+          if (dData?.githubRepoUrl) {
+            setPushedUrl(dData.githubRepoUrl);
+            setPushState("PUSHED");
+          }
+        }
+      } catch (err) {
+        console.warn("[GitHubPushPhase] Failed to check status:", err);
+      }
+    }
+    checkStatus();
+  }, [effectiveUserId, pid]);
 
   const autoReadmeContent = `# ${workspace.productName} — MVP
 
@@ -62,17 +97,15 @@ Built with **MakeMistakes BuildOS** — an isolated cloud development environmen
 - **Framework**: Next.js 14+ / React 18
 - **Language**: TypeScript
 - **Styling**: Tailwind CSS
-- **Animations**: Framer Motion
 - **Icons**: Lucide React
 
 ## 💡 Key Features
 - **Problem Pitch & Hero**: ${workspace.tagline}
 - **Component Architecture**: Modular React components (\`app/page.tsx\`, \`Navbar\`, \`Hero\`)
-- **Validation**: Full suite of unit & criteria validation checks
 
 ## 🛠️ Local Setup
 \`\`\`bash
-git clone https://github.com/your-username/${repoName}.git
+git clone https://github.com/${githubUsername || "username"}/${repoName}.git
 cd ${repoName}
 npm install
 npm run dev
@@ -82,19 +115,39 @@ npm run dev
 *Built with ❤️ by an active builder on MakeMistakes OS.*
 `;
 
-  const handlePushToGithub = () => {
+  const handlePushToGithub = async () => {
     if (pushState === "PREPARING" || pushState === "COMMITTING") return;
 
     setPushState("PREPARING");
+    setErrorMessage(null);
 
-    setTimeout(() => {
-      setPushState("COMMITTING");
-    }, 1200);
+    try {
+      setTimeout(() => setPushState("COMMITTING"), 800);
 
-    setTimeout(() => {
-      setPushState("PUSHED");
-      setPushedUrl(`https://github.com/builder-student/${repoName}`);
-    }, 2800);
+      const res = await fetch("/api/github/push", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          userId: effectiveUserId,
+          problemId: pid,
+          repoName,
+          isPrivate: visibility === "private",
+        }),
+      });
+
+      const data = await res.json();
+
+      if (res.ok && data.repoUrl) {
+        setPushState("PUSHED");
+        setPushedUrl(data.repoUrl);
+      } else {
+        setPushState("ERROR");
+        setErrorMessage(data.error || "Failed to push repository to GitHub.");
+      }
+    } catch (err: any) {
+      setPushState("ERROR");
+      setErrorMessage(err.message || "Network error while pushing code.");
+    }
   };
 
   const handleCopyUrl = () => {
@@ -276,7 +329,7 @@ npm run dev
             </div>
 
             {/* Status Indicator */}
-            {pushState !== "IDLE" && (
+            {pushState !== "IDLE" && pushState !== "ERROR" && (
               <div className="p-3.5 rounded-xl bg-zinc-900/90 border border-zinc-800 space-y-2 font-mono text-xs">
                 <div className="flex items-center justify-between text-zinc-300">
                   <span className="flex items-center gap-2">
@@ -295,21 +348,53 @@ npm run dev
               </div>
             )}
 
-            {/* Push Action Button */}
-            {pushState !== "PUSHED" ? (
-              <button
-                type="button"
-                onClick={handlePushToGithub}
-                disabled={pushState !== "IDLE"}
-                className="w-full flex items-center justify-center gap-2.5 py-3.5 px-6 rounded-xl bg-teal-500 hover:bg-teal-400 text-zinc-950 font-extrabold text-sm transition-all shadow-md cursor-pointer disabled:opacity-50"
-              >
-                {pushState !== "IDLE" ? (
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                ) : (
+            {errorMessage && (
+              <div className="p-3 rounded-xl bg-rose-950/80 border border-rose-800 text-xs font-mono text-rose-300">
+                ⚠️ {errorMessage}
+              </div>
+            )}
+
+            {/* OAuth Connection vs Push Button */}
+            {!isConnected ? (
+              <div className="space-y-3">
+                <a
+                  href={`/api/github/connect?userId=${encodeURIComponent(effectiveUserId)}&problemId=${encodeURIComponent(pid)}`}
+                  className="w-full flex items-center justify-center gap-2.5 py-3.5 px-6 rounded-xl bg-teal-500 hover:bg-teal-400 text-zinc-950 font-extrabold text-sm transition-all shadow-md cursor-pointer"
+                >
                   <FolderGit2 className="h-4 w-4" />
-                )}
-                <span>{pushState !== "IDLE" ? "Pushing Code..." : "Push Code to GitHub"}</span>
-              </button>
+                  <span>Connect GitHub Account</span>
+                </a>
+                <p className="text-[11px] text-zinc-400 text-center font-mono">
+                  Authorization allows MakeMistakes to push your code directly to your GitHub profile.
+                </p>
+              </div>
+            ) : pushState !== "PUSHED" ? (
+              <div className="space-y-3">
+                <div className="flex items-center gap-2.5 p-2.5 rounded-xl bg-zinc-900 border border-zinc-800 text-xs font-mono text-zinc-300">
+                  {githubAvatarUrl ? (
+                    <img src={githubAvatarUrl} alt={githubUsername || "GitHub"} className="h-6 w-6 rounded-full" />
+                  ) : (
+                    <div className="h-6 w-6 rounded-full bg-teal-800 flex items-center justify-center text-[10px] font-bold text-white">
+                      GH
+                    </div>
+                  )}
+                  <span>Connected as <strong>@{githubUsername}</strong></span>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={handlePushToGithub}
+                  disabled={pushState === "PREPARING" || pushState === "COMMITTING"}
+                  className="w-full flex items-center justify-center gap-2.5 py-3.5 px-6 rounded-xl bg-teal-500 hover:bg-teal-400 text-zinc-950 font-extrabold text-sm transition-all shadow-md cursor-pointer disabled:opacity-50"
+                >
+                  {pushState === "PREPARING" || pushState === "COMMITTING" ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <FolderGit2 className="h-4 w-4" />
+                  )}
+                  <span>{pushState === "PREPARING" || pushState === "COMMITTING" ? "Pushing Code..." : "Push Code to GitHub"}</span>
+                </button>
+              </div>
             ) : (
               <div className="space-y-3 pt-2">
                 <div className="p-3 bg-emerald-950/60 border border-emerald-800 rounded-xl space-y-2">

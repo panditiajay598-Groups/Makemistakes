@@ -51,10 +51,7 @@ export function buildBuildOsPreviewHtml(
   meta: { problemId: string }
 ): string {
   const f = norm(files);
-  let page = f["app/page.tsx"] || f["page.tsx"] || "";
-  if (f["page.tsx"] && (!f["app/page.tsx"] || f["app/page.tsx"].includes("Your product starts here"))) {
-    page = f["page.tsx"];
-  }
+  const page = f["app/page.tsx"] || f["page.tsx"] || "";
   const css = f["app/globals.css"] || f["globals.css"] || "";
 
   // Collect ONLY React UI component files (.tsx, .jsx or components/*.ts)
