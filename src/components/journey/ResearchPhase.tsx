@@ -299,6 +299,20 @@ export default function ResearchPhase({
     persistData(updated, answers, checklist, attachedResources);
   };
 
+  const handleAnswerChange = (id: string, val: string) => {
+    const updated = { ...answers, [id]: val };
+    setAnswers(updated);
+    persistData(sources, updated, checklist, attachedResources);
+  };
+
+  const handleToggleChecklist = (id: string) => {
+    const updated = checklist.map((item) =>
+      item.id === id ? { ...item, checked: !item.checked } : item
+    );
+    setChecklist(updated);
+    persistData(sources, answers, updated, attachedResources);
+  };
+
   const handleAddResource = () => {
     if (!showResourceInput || !resourceValue.trim()) return;
     const newRes = {
@@ -601,7 +615,7 @@ export default function ResearchPhase({
                     rows={5}
                     value={currentText}
                     onChange={(e) =>
-                      handleTextChange(q.id, e.target.value, q.limit)
+                      handleAnswerChange(q.id, e.target.value)
                     }
                     placeholder={q.placeholder}
                     className="w-full p-4 rounded-xl border border-zinc-200 text-xs sm:text-sm font-sans text-zinc-800 placeholder-zinc-400 bg-zinc-50/50 focus:bg-white focus:border-teal-500 focus:outline-none transition-all resize-y leading-relaxed"
@@ -736,7 +750,7 @@ export default function ResearchPhase({
                 <input
                   type="checkbox"
                   checked={item.checked}
-                  onChange={() => toggleChecklist(item.id)}
+                  onChange={() => handleToggleChecklist(item.id)}
                   className="h-4 w-4 text-teal-700 border-zinc-300 rounded focus:ring-teal-500 shrink-0 cursor-pointer"
                 />
                 <span className="text-xs sm:text-sm font-sans">{item.label}</span>

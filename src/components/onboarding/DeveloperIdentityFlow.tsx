@@ -35,6 +35,7 @@ import {
   ArrowLeft,
   Check,
 } from "lucide-react";
+import { getOnboardingProfile, saveOnboardingProfile } from "@/lib/onboardingStore";
 
 export interface DeveloperIdentityResponses {
   futureVision: string;

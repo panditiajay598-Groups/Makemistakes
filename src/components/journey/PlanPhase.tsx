@@ -869,7 +869,7 @@ export default function PlanPhase({
           type="button"
           onClick={() => {
             if (!isWorksheetComplete) return;
-            persistData();
+            handleSaveProgress();
             onComplete();
           }}
           disabled={!isWorksheetComplete}

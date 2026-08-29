@@ -29,6 +29,7 @@ interface DesignPhaseProps {
   onComplete: () => void;
   onBackToJourney?: () => void;
   problemData?: ProblemData | null;
+  userId?: string;
 }
 
 // Generic role chips — not problem-specific

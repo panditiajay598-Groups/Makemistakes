@@ -146,14 +146,14 @@ export default function GenericProblemJourneyPage() {
           if (isReset) {
             hasExplicitUrlStep = true;
             urlStepVal = 1;
-            clearProblemJourneyData(targetId);
-            saveJourneyStep(userId, targetId, 1);
+            clearProblemJourneyData(targetId!);
+            saveJourneyStep(userId, targetId!, 1);
           } else if (urlStep && !isNaN(parseInt(urlStep, 10))) {
             const parsed = parseInt(urlStep, 10);
             if (parsed >= 1 && parsed <= 9) {
               hasExplicitUrlStep = true;
               urlStepVal = parsed as JourneyStep;
-              saveJourneyStep(userId, targetId, urlStepVal);
+              saveJourneyStep(userId, targetId!, urlStepVal);
             }
           }
         }
@@ -318,7 +318,7 @@ export default function GenericProblemJourneyPage() {
     setShowCompletionModal(false);
     // New problem always starts at Discover with clean slate
     clearProblemJourneyData(nextId);
-    saveJourneyStep(nextId, 1);
+    saveJourneyStep(userId, nextId, 1);
     setCurrentStep(1);
     window.location.href = `/journey/${nextId}?step=1&reset=true`;
   }, []);
@@ -497,7 +497,6 @@ export default function GenericProblemJourneyPage() {
               {currentStep === 3 && (
                 <DesignPhase
                   key={rawId}
-                  userId={userId}
                   problemData={problemData}
                   onComplete={nextStep}
                   onBackToJourney={() => router.push("/dashboard/journey")}
@@ -508,7 +507,6 @@ export default function GenericProblemJourneyPage() {
               {currentStep === 4 && (
                 <PlanPhase
                   key={rawId}
-                  userId={userId}
                   problemData={problemData}
                   onComplete={nextStep}
                   onBackToJourney={() => router.push("/dashboard/journey")}
@@ -519,7 +517,6 @@ export default function GenericProblemJourneyPage() {
               {currentStep === 5 && (
                 <BuildPhase
                   key={rawId}
-                  userId={userId}
                   problemData={problemData}
                   onComplete={nextStep}
                   onBackToJourney={() => router.push("/dashboard/journey")}
@@ -530,7 +527,6 @@ export default function GenericProblemJourneyPage() {
               {currentStep === 6 && (
                 <TestPhase
                   key={rawId}
-                  userId={userId}
                   problemData={problemData}
                   onComplete={nextStep}
                   onBackToJourney={() => router.push("/dashboard/journey")}
@@ -552,7 +548,6 @@ export default function GenericProblemJourneyPage() {
               {currentStep === 8 && (
                 <ImprovePhase
                   key={rawId}
-                  userId={userId}
                   problemData={problemData}
                   onComplete={nextStep}
                   onBackToJourney={() => router.push("/dashboard/journey")}
@@ -563,7 +558,6 @@ export default function GenericProblemJourneyPage() {
               {currentStep === 9 && (
                 <PortfolioShowcase
                   key={rawId}
-                  userId={userId}
                   problemData={problemData}
                   onBackToDashboard={() => router.push("/dashboard")}
                 />

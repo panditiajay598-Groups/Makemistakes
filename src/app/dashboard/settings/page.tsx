@@ -72,7 +72,9 @@ interface PreferencesState {
   };
 }
 
-export default function SettingsPage() {
+import { Suspense } from "react";
+
+function SettingsContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const userId = getJourneyUserId();
@@ -1357,5 +1359,13 @@ export default function SettingsPage() {
         </div>
       )}
     </div>
+  );
+}
+
+export default function SettingsPage() {
+  return (
+    <Suspense fallback={<div className="min-h-screen bg-zinc-950 p-8 text-zinc-400 font-sans text-xs">Loading settings...</div>}>
+      <SettingsContent />
+    </Suspense>
   );
 }

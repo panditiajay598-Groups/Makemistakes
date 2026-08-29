@@ -68,7 +68,7 @@ export async function GET(req: Request) {
       resultProblemId = unfinishedDoc.problemId;
       resultStep = typeof unfinishedDoc.currentPhase === "number" ? unfinishedDoc.currentPhase : 1;
       isUnfinished = true;
-      metaDoc = problemsMap.get(resultProblemId);
+      metaDoc = problemsMap.get(unfinishedDoc.problemId);
     } else {
       // Find the first uncompleted problem statement
       for (const prob of allProblems) {

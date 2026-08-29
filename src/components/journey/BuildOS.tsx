@@ -44,6 +44,7 @@ type Props = {
   problemData?: ProblemData | null;
   onReadyChange?: (ready: boolean) => void;
   onComplete?: () => void;
+  userId?: string;
 };
 
 function flattenFiles(nodes: FileNode[], acc: string[] = []): string[] {
