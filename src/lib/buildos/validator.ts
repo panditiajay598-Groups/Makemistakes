@@ -59,29 +59,37 @@ function findWorkspaceFile(
 ): { found: boolean; exactMatch: string | null; casingMismatch: boolean } {
   const fileKeys = Object.keys(workspaceFiles);
 
-  // 1. Direct exact match
-  if (workspaceFiles[resolvedPath] !== undefined) {
-    return { found: true, exactMatch: resolvedPath, casingMismatch: false };
-  }
+  const candidatePaths = [
+    resolvedPath,
+    resolvedPath.replace(/^app\//, ""),
+    resolvedPath.startsWith("app/") ? resolvedPath : `app/${resolvedPath}`,
+  ];
 
-  // 2. Exact match with extension
-  for (const ext of LOCAL_EXTENSIONS) {
-    const candidate = resolvedPath + ext;
-    if (workspaceFiles[candidate] !== undefined) {
-      return { found: true, exactMatch: candidate, casingMismatch: false };
-    }
-  }
-
-  // 3. Check case-insensitive match to detect casing mismatch
-  const lowerResolved = resolvedPath.toLowerCase();
-  for (const key of fileKeys) {
-    const lowerKey = key.toLowerCase();
-    if (lowerKey === lowerResolved) {
-      return { found: true, exactMatch: key, casingMismatch: true };
+  // 1. Direct exact match across candidates
+  for (const basePath of candidatePaths) {
+    if (workspaceFiles[basePath] !== undefined) {
+      return { found: true, exactMatch: basePath, casingMismatch: false };
     }
     for (const ext of LOCAL_EXTENSIONS) {
-      if (lowerKey === (lowerResolved + ext).toLowerCase()) {
+      const candidate = basePath + ext;
+      if (workspaceFiles[candidate] !== undefined) {
+        return { found: true, exactMatch: candidate, casingMismatch: false };
+      }
+    }
+  }
+
+  // 2. Check case-insensitive match to detect casing mismatch
+  for (const basePath of candidatePaths) {
+    const lowerResolved = basePath.toLowerCase();
+    for (const key of fileKeys) {
+      const lowerKey = key.toLowerCase();
+      if (lowerKey === lowerResolved) {
         return { found: true, exactMatch: key, casingMismatch: true };
+      }
+      for (const ext of LOCAL_EXTENSIONS) {
+        if (lowerKey === (lowerResolved + ext).toLowerCase()) {
+          return { found: true, exactMatch: key, casingMismatch: true };
+        }
       }
     }
   }

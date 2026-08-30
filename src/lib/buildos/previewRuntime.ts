@@ -48,7 +48,7 @@ function stripModuleSyntax(source: string, isPage = false): string {
 
 export function buildBuildOsPreviewHtml(
   files: PreviewFiles,
-  meta: { problemId: string }
+  meta: { problemId: string; runId?: number }
 ): string {
   const f = norm(files);
   const page = f["app/page.tsx"] || f["page.tsx"] || "";
@@ -235,7 +235,7 @@ ${css}
 <body>
 <div id="root"></div>
 <script>
-window.__post=function(type,payload){parent.postMessage(Object.assign({source:"makemistakes-buildos-preview",type:type},payload||{}), "*")};
+window.__post=function(type,payload){parent.postMessage(Object.assign({source:"makemistakes-buildos-preview",runId:${meta.runId || 0},type:type},payload||{}), "*")};
 window.onerror=function(msg, url, line, col, err){
   if (String(msg).includes("ResizeObserver")) return;
   var detail = (err && err.stack) ? err.stack : (err && err.message) ? err.message : String(msg);

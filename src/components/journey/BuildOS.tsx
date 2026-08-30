@@ -154,6 +154,8 @@ export default function BuildOS({ problemId, productName: propName, problemData,
     setLogs((prev) => [...prev.slice(-80), line]);
   }, []);
 
+  const activeRunIdRef = useRef<number>(0);
+
   // Controlled, deterministic Run handler (MUST NOT BE CALLED AUTOMATICALLY)
   const runProject = useCallback(async () => {
     // Prevent duplicate concurrent runs
@@ -161,9 +163,12 @@ export default function BuildOS({ problemId, productName: propName, problemData,
       return;
     }
 
+    const currentRunId = Date.now();
+    activeRunIdRef.current = currentRunId;
+
     setRuntimeState("SAVING");
     setRunError(null);
-    pushLog("Saving workspace files...");
+    setLogs((prev) => [...prev.filter((l) => !l.startsWith("✓") && !l.startsWith("Error:") && !l.startsWith("Build failed")), `--- Run Execution ---`, "Saving workspace files..."]);
 
     // 1. Force save active file in editor to disk FIRST
     let currentWorkspaceFiles: Record<string, string> = {};
@@ -182,7 +187,6 @@ export default function BuildOS({ problemId, productName: propName, problemData,
     }
 
     setRuntimeState("STARTING");
-    pushLog("Starting project runtime...");
 
     // 2. Execute build & compile preview payload using user's current workspace
     try {
@@ -196,6 +200,9 @@ export default function BuildOS({ problemId, productName: propName, problemData,
         }),
       });
       const data = await res.json();
+
+      if (activeRunIdRef.current !== currentRunId) return; // Stale run check
+
       if (!data.ok) {
         setRuntimeState("FAILED");
         setRunError(data.error || "Build failed");
@@ -206,15 +213,9 @@ export default function BuildOS({ problemId, productName: propName, problemData,
       setPreviewHtml(data.previewHtml);
       setPreviewKey(Date.now());
       setRuntimeState("STARTING");
-      console.log("[BuildOS]", {
-        userId,
-        problemId,
-        workspaceId: data.workspaceId || workspaceId,
-        activePath,
-        runtimeState: "STARTING",
-      });
       (data.logs || []).forEach((l: string) => pushLog(l));
     } catch (err: any) {
+      if (activeRunIdRef.current !== currentRunId) return;
       setRuntimeState("FAILED");
       setRunError(err.message || String(err));
       pushLog(err.message || String(err));
@@ -226,6 +227,9 @@ export default function BuildOS({ problemId, productName: propName, problemData,
     const handlePreviewMessage = (event: MessageEvent) => {
       const data = event.data;
       if (!data || data.source !== "makemistakes-buildos-preview") return;
+
+      // Filter out stale events from previous run executions
+      if (data.runId && data.runId !== activeRunIdRef.current) return;
 
       if (data.type === "ready") {
         setRuntimeState("RUNNING");

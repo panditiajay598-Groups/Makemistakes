@@ -497,7 +497,7 @@ export default function ApiDemoPage() {
   );
 }
 `,
-            "api.ts": `const db: { id: string; title: string }[] = [];
+            "app/api.ts": `const db: { id: string; title: string }[] = [];
 
 export async function list${noun}s() {
   return [...db];
@@ -510,7 +510,7 @@ export async function create${noun}(title: string) {
 }
 `,
           },
-          ["ApiDemoPage (page.tsx)", "└── api.ts"]
+          ["ApiDemoPage (page.tsx)", "└── app/api.ts"]
         );
       }
 
@@ -537,7 +537,7 @@ export default function ApiDemoPage() {
   );
 }
 `,
-          "api.ts": `/**
+          "app/api.ts": `/**
  * YOUR WRITE STEP — simulated API for ${productName}.
  * Implement list${noun}s() and create${noun}(title).
  * In-memory array is fine.
@@ -554,7 +554,7 @@ export async function create${noun}(title: string) {
 }
 `,
         },
-        ["ApiDemoPage (page.tsx)", "└── api.ts ← you write this"]
+        ["ApiDemoPage (page.tsx)", "└── app/api.ts ← you write this"]
       );
 
     case "persist":

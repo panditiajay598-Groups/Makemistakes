@@ -74,14 +74,16 @@ export async function POST(req: Request) {
       });
     }
 
-    const previewHtml = buildBuildOsPreviewHtml(files, { problemId });
+    const runId = Date.now();
+    const previewHtml = buildBuildOsPreviewHtml(files, { problemId, runId });
     setWorkspaceStatus(userId, problemId, "running").catch(() => {});
 
     return NextResponse.json({
       ok: true,
-      message: "Project running",
+      runId,
+      message: "Starting project runtime...",
       previewHtml,
-      logs: ["Starting project...", "✓ Project running"],
+      logs: ["Saving workspace files...", "Validating workspace dependency graph...", "Starting project runtime..."],
     });
   } catch (err: any) {
     return NextResponse.json({
