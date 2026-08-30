@@ -196,6 +196,7 @@ export default function BuildOS({ problemId, productName: propName, problemData,
         body: JSON.stringify({
           userId,
           problemId,
+          runId: currentRunId,
           files: currentWorkspaceFiles,
         }),
       });
@@ -212,7 +213,6 @@ export default function BuildOS({ problemId, productName: propName, problemData,
 
       setPreviewHtml(data.previewHtml);
       setPreviewKey(Date.now());
-      setRuntimeState("STARTING");
       (data.logs || []).forEach((l: string) => pushLog(l));
     } catch (err: any) {
       if (activeRunIdRef.current !== currentRunId) return;
@@ -229,7 +229,7 @@ export default function BuildOS({ problemId, productName: propName, problemData,
       if (!data || data.source !== "makemistakes-buildos-preview") return;
 
       // Filter out stale events from previous run executions
-      if (data.runId && data.runId !== activeRunIdRef.current) return;
+      if (data.runId && activeRunIdRef.current > 0 && String(data.runId) !== String(activeRunIdRef.current)) return;
 
       if (data.type === "ready") {
         setRuntimeState("RUNNING");
@@ -902,6 +902,9 @@ export default function BuildOS({ problemId, productName: propName, problemData,
                           sandbox="allow-scripts"
                           className="w-full h-full border-0"
                           srcDoc={previewHtml}
+                          onLoad={() => {
+                            setRuntimeState((prev) => (prev === "STARTING" || prev === "SAVING" ? "RUNNING" : prev));
+                          }}
                         />
                       </div>
                     ) : runtimeState === "STARTING" || runtimeState === "SAVING" ? (

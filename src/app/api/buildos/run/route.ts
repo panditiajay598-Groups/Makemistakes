@@ -16,6 +16,7 @@ export async function POST(req: Request) {
     const body = await req.json();
     const userId = String(body.userId || "").trim();
     const problemId = String(body.problemId || "").trim();
+    const runId = body.runId || Date.now();
     const clientFiles = body.files && typeof body.files === "object" ? body.files : null;
 
     if (!userId || !problemId) {
@@ -74,7 +75,6 @@ export async function POST(req: Request) {
       });
     }
 
-    const runId = Date.now();
     const previewHtml = buildBuildOsPreviewHtml(files, { problemId, runId });
     setWorkspaceStatus(userId, problemId, "running").catch(() => {});
 
