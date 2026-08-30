@@ -186,6 +186,38 @@ ${stubCode}
 
 ${pageCode}
 
+class PreviewErrorBoundary extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = { hasError: false, error: null };
+  }
+  static getDerivedStateFromError(error) {
+    return { hasError: true, error };
+  }
+  componentDidCatch(error, errorInfo) {
+    var msg = (error && error.stack) ? error.stack : (error && error.message) ? error.message : String(error);
+    window.__post("error", { name: error ? error.name || "RuntimeError" : "RuntimeError", message: msg });
+  }
+  componentDidMount() {
+    if (!this.state.hasError) {
+      window.__post("ready", {});
+    }
+  }
+  render() {
+    if (this.state.hasError) {
+      var errMsg = this.state.error && this.state.error.message ? this.state.error.message : String(this.state.error);
+      var errName = this.state.error && this.state.error.name ? this.state.error.name : "Runtime Error";
+      return React.createElement("div", {
+        style: { padding: 24, background: "#fef2f2", border: "1px solid #fecaca", borderRadius: 12, margin: 20, fontFamily: "monospace", color: "#991b1b" }
+      },
+        React.createElement("h3", { style: { margin: "0 0 8px", fontSize: 14, fontWeight: "bold" } }, errName + ": " + errMsg),
+        React.createElement("pre", { style: { margin: 0, whiteSpace: "pre-wrap", fontSize: 12 } }, (this.state.error && this.state.error.stack) ? this.state.error.stack : errMsg)
+      );
+    }
+    return this.props.children;
+  }
+}
+
 try {
   const App = window.__BUILDOS_PAGE_APP__
     || (typeof HeroPage !== "undefined" ? HeroPage : null)
@@ -199,15 +231,15 @@ try {
   }
   
   const root = ReactDOM.createRoot(document.getElementById("root"));
-  root.render(React.createElement(App));
-  window.__post("ready", {});
+  root.render(React.createElement(PreviewErrorBoundary, null, React.createElement(App)));
 } catch (err) {
   const errMsg = err && err.message ? err.message : String(err);
-  window.__post("error", { message: errMsg });
+  const errName = err && err.name ? err.name : "Error";
+  window.__post("error", { name: errName, message: errMsg });
   document.getElementById("root").innerHTML =
     '<div style="padding:24px;background:#fef2f2;border:1px solid #fecaca;border-radius:12px;margin:20px;font-family:monospace;color:#991b1b;">' +
-    '<h3 style="margin:0 0 8px;font-size:14px;font-weight:bold;">Preview Runtime Error</h3>' +
-    '<pre style="margin:0;white-space:pre-wrap;font-size:12px;">' + errMsg + '</pre>' +
+    '<h3 style="margin:0 0 8px;font-size:14px;font-weight:bold;">Preview Runtime Error: ' + errName + '</h3>' +
+    '<pre style="margin:0;white-space:pre-wrap;font-size:12px;">' + (err && err.stack ? err.stack : errMsg) + '</pre>' +
     '</div>';
 }
 </script>

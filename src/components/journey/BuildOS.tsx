@@ -205,13 +205,13 @@ export default function BuildOS({ problemId, productName: propName, problemData,
 
       setPreviewHtml(data.previewHtml);
       setPreviewKey(Date.now());
-      setRuntimeState("RUNNING");
+      setRuntimeState("STARTING");
       console.log("[BuildOS]", {
         userId,
         problemId,
         workspaceId: data.workspaceId || workspaceId,
         activePath,
-        runtimeState: "RUNNING",
+        runtimeState: "STARTING",
       });
       (data.logs || []).forEach((l: string) => pushLog(l));
     } catch (err: any) {
@@ -220,6 +220,30 @@ export default function BuildOS({ problemId, productName: propName, problemData,
       pushLog(err.message || String(err));
     }
   }, [userId, problemId, activePath, content, runtimeState, workspaceId, pushLog]);
+
+  // Handle postMessage events from preview iframe sandbox
+  useEffect(() => {
+    const handlePreviewMessage = (event: MessageEvent) => {
+      const data = event.data;
+      if (!data || data.source !== "makemistakes-buildos-preview") return;
+
+      if (data.type === "ready") {
+        setRuntimeState("RUNNING");
+        pushLog("✓ Project running");
+        pushLog("✓ Preview ready");
+      } else if (data.type === "error") {
+        setRuntimeState("FAILED");
+        const name = data.name || "RuntimeError";
+        const msg = data.message || "An unhandled JavaScript exception occurred in preview.";
+        const fullErr = `Runtime Error (${name}): ${msg}`;
+        setRunError(fullErr);
+        pushLog(`Error: ${fullErr}`);
+      }
+    };
+
+    window.addEventListener("message", handlePreviewMessage);
+    return () => window.removeEventListener("message", handlePreviewMessage);
+  }, [pushLog]);
 
   const ensure = useCallback(async () => {
     setPhase("booting");
