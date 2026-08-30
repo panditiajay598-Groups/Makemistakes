@@ -98,9 +98,15 @@ export function buildBuildOsPreviewHtml(
   );
 
   const stubCode = jsxTags
+    .filter((tag) => {
+      const isDeclInExtra = new RegExp(`\\b(function|var|let|const|class)\\s+${tag}\\b`).test(extraCode);
+      const isDeclInPage = new RegExp(`\\b(function|var|let|const|class)\\s+${tag}\\b`).test(pageCode);
+      const isImportedInPage = new RegExp(`\\bimport\\b[\\s\\S]*?\\b${tag}\\b`).test(page);
+      return !isDeclInExtra && !isDeclInPage && !isImportedInPage;
+    })
     .map(
       (tag) => `
-if (typeof ${tag} === "undefined") {
+if (typeof window.${tag} === "undefined" && typeof ${tag} === "undefined") {
   var ${tag} = function ${tag}Placeholder(props) {
     return React.createElement(
       "div",
@@ -235,12 +241,21 @@ ${css}
 <body>
 <div id="root"></div>
 <script>
-window.__post=function(type,payload){parent.postMessage(Object.assign({source:"makemistakes-buildos-preview",runId:${meta.runId || 0},type:type},payload||{}), "*")};
-window.onerror=function(msg, url, line, col, err){
-  if (String(msg).includes("ResizeObserver")) return;
-  var detail = (err && err.stack) ? err.stack : (err && err.message) ? err.message : String(msg);
-  window.__post("error",{message: detail});
-};
+(function(){
+  var hasPostedError = false;
+  window.__post = function(type, payload) {
+    if (type === "error") {
+      if (hasPostedError) return;
+      hasPostedError = true;
+    }
+    parent.postMessage(Object.assign({source:"makemistakes-buildos-preview",runId:${meta.runId || 0},type:type},payload||{}), "*");
+  };
+  window.onerror = function(msg, url, line, col, err) {
+    if (String(msg).includes("ResizeObserver")) return;
+    var detail = (err && err.stack) ? err.stack : (err && err.message) ? err.message : String(msg);
+    window.__post("error",{message: detail});
+  };
+})();
 
 (function(){
   var rawJsx = ${JSON.stringify(combinedJsx)};
