@@ -114,37 +114,9 @@ if (typeof ${tag} === "undefined") {
     )
     .join("\n");
 
-  return `<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Preview ${escapeHtml(meta.problemId)}</title>
-<script src="https://cdn.tailwindcss.com"></script>
-<style>
-html,body,#root{margin:0;min-height:100%}
-body{font-family:ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:#ffffff;color:#0f172a}
-${css}
-</style>
-<script crossorigin src="https://unpkg.com/react@18.3.1/umd/react.development.js"></script>
-<script crossorigin src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js"></script>
-<script src="https://unpkg.com/@babel/standalone@7.26.9/babel.min.js"></script>
-</head>
-<body>
-<div id="root"></div>
-<script>
-window.__post=function(type,payload){parent.postMessage(Object.assign({source:"makemistakes-buildos-preview",type:type},payload||{}), "*")};
-window.onerror=function(msg, url, line, col, err){
-  if (String(msg).includes("ResizeObserver")) return;
-  var detail = (err && err.stack) ? err.stack : (err && err.message) ? err.message : String(msg);
-  var cleanMsg = (detail === "Script error." || detail === "Uncaught Script error.")
-    ? "Runtime Error: An unhandled JavaScript exception occurred in your preview code. Check imported component exports and syntax."
-    : detail;
-  window.__post("error",{message: cleanMsg});
-};
-</script>
-<script type="text/babel" data-presets="react,typescript">
+  const combinedJsx = `
 const React = window.React;
+const ReactDOM = window.ReactDOM;
 const { useState, useEffect, useMemo, useRef, useCallback } = React;
 const motion = new Proxy({},{
   get:(target, prop) => {
@@ -242,6 +214,54 @@ try {
     '<pre style="margin:0;white-space:pre-wrap;font-size:12px;">' + (err && err.stack ? err.stack : errMsg) + '</pre>' +
     '</div>';
 }
+`;
+
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Preview ${escapeHtml(meta.problemId)}</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+html,body,#root{margin:0;min-height:100%}
+body{font-family:ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:#ffffff;color:#0f172a}
+${css}
+</style>
+<script crossorigin src="https://unpkg.com/react@18.3.1/umd/react.development.js"></script>
+<script crossorigin src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js"></script>
+<script src="https://unpkg.com/@babel/standalone@7.26.9/babel.min.js"></script>
+</head>
+<body>
+<div id="root"></div>
+<script>
+window.__post=function(type,payload){parent.postMessage(Object.assign({source:"makemistakes-buildos-preview",type:type},payload||{}), "*")};
+window.onerror=function(msg, url, line, col, err){
+  if (String(msg).includes("ResizeObserver")) return;
+  var detail = (err && err.stack) ? err.stack : (err && err.message) ? err.message : String(msg);
+  window.__post("error",{message: detail});
+};
+
+(function(){
+  var rawJsx = ${JSON.stringify(combinedJsx)};
+  try {
+    var compiled = Babel.transform(rawJsx, {
+      presets: ["react", "typescript"],
+      filename: "preview.tsx"
+    }).code;
+    var scriptEl = document.createElement("script");
+    scriptEl.text = compiled;
+    document.body.appendChild(scriptEl);
+  } catch (compileErr) {
+    var errMsg = compileErr && compileErr.message ? compileErr.message : String(compileErr);
+    window.__post("error", { name: "BabelCompileError", message: errMsg });
+    document.getElementById("root").innerHTML =
+      '<div style="padding:24px;background:#fef2f2;border:1px solid #fecaca;border-radius:12px;margin:20px;font-family:monospace;color:#991b1b;">' +
+      '<h3 style="margin:0 0 8px;font-size:14px;font-weight:bold;">Babel Compilation Error</h3>' +
+      '<pre style="margin:0;white-space:pre-wrap;font-size:12px;">' + errMsg + '</pre>' +
+      '</div>';
+  }
+})();
 </script>
 </body>
 </html>`;
