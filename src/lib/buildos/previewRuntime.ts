@@ -34,14 +34,20 @@ function stripModuleSyntax(source: string, isPage = false): string {
       cleaned = cleaned.replace(/export\s+default\s+/g, "window.__BUILDOS_PAGE_APP__ = ");
     }
   } else {
-    // Sibling component files — do NOT mutate window.__BUILDOS_PAGE_APP__
-    cleaned = cleaned.replace(/export\s+default\s+function\s+/g, "function ");
+    // Sibling component files — attach exported symbols to window to prevent top-level scope collisions
+    cleaned = cleaned.replace(/export\s+default\s+function\s+([a-zA-Z0-9_$]+)/g, "window.$1 = function $1");
+    cleaned = cleaned.replace(/export\s+function\s+([a-zA-Z0-9_$]+)/g, "window.$1 = function $1");
+    cleaned = cleaned.replace(/export\s+const\s+([a-zA-Z0-9_$]+)/g, "window.$1 = ");
+    cleaned = cleaned.replace(/export\s+let\s+([a-zA-Z0-9_$]+)/g, "window.$1 = ");
     cleaned = cleaned.replace(/export\s+default\s+/g, "var __sibling_export = ");
   }
 
   return cleaned
+    .replace(/export\s+function\s+([a-zA-Z0-9_$]+)/g, "window.$1 = function $1")
     .replace(/export\s+function\s+/g, "function ")
+    .replace(/export\s+const\s+([a-zA-Z0-9_$]+)/g, "window.$1 = ")
     .replace(/export\s+const\s+/g, "var ")
+    .replace(/export\s+let\s+([a-zA-Z0-9_$]+)/g, "window.$1 = ")
     .replace(/export\s+let\s+/g, "var ")
     .replace(/export\s+\{[^}]*\};?/g, "");
 }
