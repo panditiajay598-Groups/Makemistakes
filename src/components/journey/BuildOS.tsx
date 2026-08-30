@@ -213,6 +213,7 @@ export default function BuildOS({ problemId, productName: propName, problemData,
 
       setPreviewHtml(data.previewHtml);
       setPreviewKey(Date.now());
+      setRuntimeState("RUNNING");
       (data.logs || []).forEach((l: string) => pushLog(l));
     } catch (err: any) {
       if (activeRunIdRef.current !== currentRunId) return;
