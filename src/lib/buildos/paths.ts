@@ -7,15 +7,38 @@ import {
   templateDir as levelTemplateDir,
 } from "./levels";
 
+import os from "os";
+
 const ROOT = process.cwd();
+
+function isWritable(dir: string): boolean {
+  try {
+    fs.mkdirSync(dir, { recursive: true });
+    const testFile = path.join(dir, `.test_${Date.now()}`);
+    fs.writeFileSync(testFile, "test", "utf8");
+    fs.unlinkSync(testFile);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export const IS_READONLY_FS =
+  process.env.VERCEL === "1" ||
+  process.env.NODE_ENV === "production" ||
+  !isWritable(path.join(ROOT, "data"));
 
 /** @deprecated Prefer level-aware helpers from levels.ts */
 export const TEMPLATE_ID = "beginner-nextjs" as const;
 /** @deprecated Prefer templateDir(level) */
 export const TEMPLATE_DIR = path.join(ROOT, "templates", "make-mistakes-beginner-template");
-export const WORKSPACES_ROOT = path.join(ROOT, "data", "student-workspaces");
+export const WORKSPACES_ROOT = IS_READONLY_FS
+  ? path.join(os.tmpdir(), "make-mistakes", "student-workspaces")
+  : path.join(ROOT, "data", "student-workspaces");
 /** @deprecated Prefer buildosCacheRoot(level) */
-export const BUILDOS_CACHE_ROOT = path.join(ROOT, "data", "buildos-cache", TEMPLATE_ID);
+export const BUILDOS_CACHE_ROOT = IS_READONLY_FS
+  ? path.join(os.tmpdir(), "make-mistakes", "buildos-cache", TEMPLATE_ID)
+  : path.join(ROOT, "data", "buildos-cache", TEMPLATE_ID);
 
 export type WorkspaceStatus =
   | "created"

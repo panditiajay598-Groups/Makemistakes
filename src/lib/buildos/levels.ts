@@ -55,7 +55,15 @@ export function templateDir(level: BuildLevel): string {
   return path.join(ROOT, "templates", getTemplate(level).dirName);
 }
 
+import os from "os";
+
 export function buildosCacheRoot(level: BuildLevel): string {
+  const isReadOnly =
+    process.env.VERCEL === "1" ||
+    process.env.NODE_ENV === "production";
+  if (isReadOnly) {
+    return path.join(os.tmpdir(), "make-mistakes", "buildos-cache", getTemplate(level).id);
+  }
   return path.join(ROOT, "data", "buildos-cache", getTemplate(level).id);
 }
 
