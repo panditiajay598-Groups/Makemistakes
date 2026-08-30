@@ -299,49 +299,14 @@ export default function BuildOS({ problemId, productName: propName, problemData,
     }
   };
 
+  const activeMissionIndexRef = useRef(activeMissionIndex);
+  useEffect(() => {
+    activeMissionIndexRef.current = activeMissionIndex;
+  }, [activeMissionIndex]);
+
   const loadStepFiles = async (stepIdx: number) => {
     const mission = workspace.missions[stepIdx];
     if (!mission) return;
-
-    // Only seed scaffold files if they do NOT exist on disk yet
-    // Existing user code must NEVER be overwritten by template files
-    const stepFiles = workspace.fileContents[mission.id] || {};
-    for (const [relPath, fileCode] of Object.entries(stepFiles)) {
-      const targetPath =
-        relPath === "page.tsx"
-          ? "app/page.tsx"
-          : relPath.startsWith("app/")
-          ? relPath
-          : `app/${relPath}`;
-
-      try {
-        const checkRes = await fetch(
-          `/api/buildos/files?userId=${encodeURIComponent(userId)}&problemId=${encodeURIComponent(problemId)}&path=${encodeURIComponent(targetPath)}`
-        );
-        if (!checkRes.ok) {
-          // File does not exist on disk yet, write initial scaffold
-          await fetch("/api/buildos/files", {
-            method: "PUT",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              userId,
-              problemId,
-              path: targetPath,
-              content: fileCode,
-            }),
-          });
-        }
-      } catch (e) {
-        console.warn(`Failed to check/seed file ${targetPath}:`, e);
-      }
-    }
-
-    // Refresh file tree
-    const treeRes = await fetch(
-      `/api/buildos/workspace?userId=${encodeURIComponent(userId)}&problemId=${encodeURIComponent(problemId)}`
-    );
-    const treeData = await treeRes.json();
-    if (treeData.tree) setTree(treeData.tree);
 
     const mainFile = mission.files && mission.files[0] ? mission.files[0] : "app/page.tsx";
     const targetMainFile =
@@ -350,9 +315,73 @@ export default function BuildOS({ problemId, productName: propName, problemData,
         : mainFile.startsWith("app/")
         ? mainFile
         : `app/${mainFile}`;
-    await openFile(targetMainFile, true);
 
-    // STRICT REQUIREMENT: DO NOT CALL runProject() AUTOMATICALLY WHEN SWITCHING STEPS!
+    const stepFiles = workspace.fileContents[mission.id] || {};
+    const inMemoryCode =
+      stepFiles[mainFile] ||
+      stepFiles[targetMainFile] ||
+      (stepFiles["page.tsx"] ? stepFiles["page.tsx"] : null) ||
+      Object.values(stepFiles)[0];
+
+    // OPTIMISTIC EDITOR RENDER (0ms UI latency for provided tasks)
+    if (inMemoryCode !== undefined && inMemoryCode !== null) {
+      setActivePath(targetMainFile);
+      setContent(inMemoryCode);
+      setDirty(false);
+    }
+
+    // NON-BLOCKING BACKGROUND PERSISTENCE & SYNCHRONIZATION
+    (async () => {
+      for (const [relPath, fileCode] of Object.entries(stepFiles)) {
+        const targetPath =
+          relPath === "page.tsx"
+            ? "app/page.tsx"
+            : relPath.startsWith("app/")
+            ? relPath
+            : `app/${relPath}`;
+
+        try {
+          const checkRes = await fetch(
+            `/api/buildos/files?userId=${encodeURIComponent(userId)}&problemId=${encodeURIComponent(problemId)}&path=${encodeURIComponent(targetPath)}`
+          );
+          if (!checkRes.ok) {
+            // File does not exist on disk yet, write initial scaffold
+            await fetch("/api/buildos/files", {
+              method: "PUT",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                userId,
+                problemId,
+                path: targetPath,
+                content: fileCode,
+              }),
+            });
+          }
+        } catch (e) {
+          console.warn(`Failed to check/seed file ${targetPath}:`, e);
+        }
+      }
+
+      // Background refresh file tree
+      try {
+        const treeRes = await fetch(
+          `/api/buildos/workspace?userId=${encodeURIComponent(userId)}&problemId=${encodeURIComponent(problemId)}`
+        );
+        const treeData = await treeRes.json();
+        if (treeData.tree && activeMissionIndexRef.current === stepIdx) {
+          setTree(treeData.tree);
+        }
+      } catch (e) {
+        console.warn("Background workspace tree refresh failed:", e);
+      }
+
+      // Fallback: If in-memory code was missing, perform full file open fallback
+      if (inMemoryCode === undefined || inMemoryCode === null) {
+        if (activeMissionIndexRef.current === stepIdx) {
+          await openFile(targetMainFile, true);
+        }
+      }
+    })();
   };
 
   const handleSelectStep = async (idx: number) => {
