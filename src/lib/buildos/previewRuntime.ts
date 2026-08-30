@@ -134,7 +134,14 @@ ${css}
 <div id="root"></div>
 <script>
 window.__post=function(type,payload){parent.postMessage(Object.assign({source:"makemistakes-buildos-preview",type:type},payload||{}), "*")};
-window.onerror=function(m){ if (String(m).includes("ResizeObserver")) return; window.__post("error",{message:String(m)})};
+window.onerror=function(msg, url, line, col, err){
+  if (String(msg).includes("ResizeObserver")) return;
+  var detail = (err && err.stack) ? err.stack : (err && err.message) ? err.message : String(msg);
+  var cleanMsg = (detail === "Script error." || detail === "Uncaught Script error.")
+    ? "Runtime Error: An unhandled JavaScript exception occurred in your preview code. Check imported component exports and syntax."
+    : detail;
+  window.__post("error",{message: cleanMsg});
+};
 </script>
 <script type="text/babel" data-presets="react,typescript">
 const React = window.React;

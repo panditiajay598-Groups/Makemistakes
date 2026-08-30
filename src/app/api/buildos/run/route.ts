@@ -3,6 +3,7 @@ import { workspaceDir } from "@/lib/buildos/paths";
 import { readAllEditableFiles, writeWorkspaceTextFile } from "@/lib/buildos/files";
 import { buildBuildOsPreviewHtml } from "@/lib/buildos/previewRuntime";
 import { setWorkspaceStatus } from "@/lib/buildos/workspaceService";
+import { validateWorkspaceDependencies } from "@/lib/buildos/validator";
 
 export const runtime = "nodejs";
 
@@ -45,10 +46,31 @@ export async function POST(req: Request) {
       ...(clientFiles || {}),
     };
 
-    if (!files["app/page.tsx"] && !files["page.tsx"]) {
+    // PART 7 — PRE-RUN VALIDATION GATE
+    const validation = validateWorkspaceDependencies(files, "Beginner");
+
+    if (!validation.valid) {
+      const errorHeader = "Build failed\n\nValidation Errors:\n";
+      const formattedErrors = validation.errors
+        .map(
+          (e, idx) =>
+            `${idx + 1}. [${e.type}] ${e.message}\n   File: ${e.file}${
+              e.suggestedAction ? `\n   Action: ${e.suggestedAction}` : ""
+            }`
+        )
+        .join("\n\n");
+
+      const fullError = `${errorHeader}${formattedErrors}`;
+
       return NextResponse.json({
         ok: false,
-        error: "Build failed\n\nError:\nModule not found: app/page.tsx",
+        error: fullError,
+        logs: [
+          "Saving workspace files...",
+          "Validating workspace dependency graph...",
+          ...validation.errors.map((e) => `Error in ${e.file}: ${e.message}`),
+          "❌ Build failed — Runtime launch blocked",
+        ],
       });
     }
 
