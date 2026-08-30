@@ -98,16 +98,10 @@ export function buildBuildOsPreviewHtml(
   );
 
   const stubCode = jsxTags
-    .filter((tag) => {
-      const isDeclInExtra = new RegExp(`\\b(function|var|let|const|class)\\s+${tag}\\b`).test(extraCode);
-      const isDeclInPage = new RegExp(`\\b(function|var|let|const|class)\\s+${tag}\\b`).test(pageCode);
-      const isImportedInPage = new RegExp(`\\bimport\\b[\\s\\S]*?\\b${tag}\\b`).test(page);
-      return !isDeclInExtra && !isDeclInPage && !isImportedInPage;
-    })
     .map(
       (tag) => `
-if (typeof window.${tag} === "undefined" && typeof ${tag} === "undefined") {
-  var ${tag} = function ${tag}Placeholder(props) {
+if (typeof window.${tag} === "undefined") {
+  window.${tag} = function ${tag}Placeholder(props) {
     return React.createElement(
       "div",
       { className: "p-6 my-3 rounded-2xl border border-dashed border-teal-500/50 bg-teal-950/30 text-teal-300 font-sans text-center shadow-sm" },
@@ -116,6 +110,18 @@ if (typeof window.${tag} === "undefined" && typeof ${tag} === "undefined") {
     );
   };
 }
+`
+    )
+    .join("\n");
+
+  const syncWindowGlobals = jsxTags
+    .map(
+      (tag) => `
+try {
+  if (typeof ${tag} !== "undefined") {
+    window.${tag} = ${tag};
+  }
+} catch (e) {}
 `
     )
     .join("\n");
@@ -159,6 +165,8 @@ function OrbitControls(){ return null; }
 window.__BUILDOS_PAGE_APP__ = null;
 
 ${extraCode}
+
+${syncWindowGlobals}
 
 ${stubCode}
 
