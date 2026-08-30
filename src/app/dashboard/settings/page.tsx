@@ -341,7 +341,6 @@ function SettingsContent() {
     { id: "journey",   label: "Product Journey",  icon: Map,             href: "/dashboard/journey" },
     { id: "products",  label: "Products",          icon: Globe,           href: "/dashboard/products" },
     { id: "portfolio", label: "Portfolio",         icon: ShieldCheck,     href: "/dashboard/portfolio" },
-    { id: "network",   label: "Builder Network",   icon: Users,           href: "#" },
     { id: "settings",  label: "Settings",          icon: SettingsIcon,    href: "/dashboard/settings" },
   ];
 
