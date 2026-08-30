@@ -88,6 +88,32 @@ export function buildBuildOsPreviewHtml(
 
   const pageCode = stripModuleSyntax(page, true);
 
+  // Extract referenced JSX components in student code to prevent runtime Uncaught ReferenceError
+  const jsxTags = Array.from(
+    new Set(
+      [...(page + " " + extraCode).matchAll(/<([A-Z][a-zA-Z0-9_$]*)/g)]
+        .map((m) => m[1])
+        .filter((t) => !["React", "Fragment", "Canvas", "Float", "OrbitControls"].includes(t))
+    )
+  );
+
+  const stubCode = jsxTags
+    .map(
+      (tag) => `
+if (typeof ${tag} === "undefined") {
+  var ${tag} = function ${tag}Placeholder(props) {
+    return React.createElement(
+      "div",
+      { className: "p-6 my-3 rounded-2xl border border-dashed border-teal-500/50 bg-teal-950/30 text-teal-300 font-sans text-center shadow-sm" },
+      React.createElement("div", { className: "text-sm font-bold text-teal-200 mb-1 flex items-center justify-center gap-2" }, "⚡ ${tag} Component Placeholder"),
+      React.createElement("p", { className: "text-xs text-zinc-400" }, "Create ${tag}.tsx in your BuildOS workspace to customize this section.")
+    );
+  };
+}
+`
+    )
+    .join("\n");
+
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -148,6 +174,8 @@ function OrbitControls(){ return null; }
 window.__BUILDOS_PAGE_APP__ = null;
 
 ${extraCode}
+
+${stubCode}
 
 ${pageCode}
 
