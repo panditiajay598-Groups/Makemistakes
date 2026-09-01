@@ -17,6 +17,7 @@ import {
 } from "lucide-react";
 
 import { getProblemContent, ProblemData } from "@/lib/problemContent";
+import { getJourneyUserId } from "@/lib/journeyUser";
 
 interface DiscoverPhaseProps {
   onComplete: () => void;
@@ -34,7 +35,7 @@ export default function DiscoverPhase({
   const content = getProblemContent(problemData);
   const QUESTIONS = content.questions;
   const pid = problemData?.problemId ?? "";
-  const effectiveUserId = (userId || "default_user").toString().trim().toLowerCase();
+  const effectiveUserId = (userId || getJourneyUserId()).toString().trim().toLowerCase();
 
   const [userAnswers, setUserAnswers] = useState<Record<number, number>>({});
   const [isSaved, setIsSaved] = useState(false);

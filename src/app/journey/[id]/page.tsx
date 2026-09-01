@@ -496,6 +496,7 @@ export default function GenericProblemJourneyPage() {
               {currentStep === 3 && (
                 <DesignPhase
                   key={rawId}
+                  userId={userId}
                   problemData={problemData}
                   onComplete={nextStep}
                   onBackToJourney={() => router.push("/dashboard/journey")}
@@ -506,6 +507,7 @@ export default function GenericProblemJourneyPage() {
               {currentStep === 4 && (
                 <PlanPhase
                   key={rawId}
+                  userId={userId}
                   problemData={problemData}
                   onComplete={nextStep}
                   onBackToJourney={() => router.push("/dashboard/journey")}
@@ -516,6 +518,7 @@ export default function GenericProblemJourneyPage() {
               {currentStep === 5 && (
                 <BuildPhase
                   key={rawId}
+                  userId={userId}
                   problemData={problemData}
                   onComplete={nextStep}
                   onBackToJourney={() => router.push("/dashboard/journey")}
@@ -526,6 +529,7 @@ export default function GenericProblemJourneyPage() {
               {currentStep === 6 && (
                 <TestPhase
                   key={rawId}
+                  userId={userId}
                   problemData={problemData}
                   onComplete={nextStep}
                   onBackToJourney={() => router.push("/dashboard/journey")}
@@ -547,6 +551,7 @@ export default function GenericProblemJourneyPage() {
               {currentStep === 8 && (
                 <ImprovePhase
                   key={rawId}
+                  userId={userId}
                   problemData={problemData}
                   onComplete={nextStep}
                   onBackToJourney={() => router.push("/dashboard/journey")}
@@ -557,6 +562,7 @@ export default function GenericProblemJourneyPage() {
               {currentStep === 9 && (
                 <PortfolioShowcase
                   key={rawId}
+                  userId={userId}
                   problemData={problemData}
                   onBackToDashboard={() => router.push("/dashboard")}
                 />

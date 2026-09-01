@@ -24,6 +24,7 @@ import {
 } from "lucide-react";
 import { ProblemData } from "@/lib/problemContent";
 import { deriveBuildWorkspace } from "@/lib/buildWorkspace";
+import { getJourneyUserId } from "@/lib/journeyUser";
 
 interface GitHubPushPhaseProps {
   onComplete: () => void;
@@ -40,7 +41,7 @@ export default function GitHubPushPhase({
 }: GitHubPushPhaseProps) {
   const workspace = useMemo(() => deriveBuildWorkspace(problemData), [problemData]);
   const pid = problemData?.problemId ?? "P000001";
-  const effectiveUserId = (userId || "default_user").toString().trim().toLowerCase();
+  const effectiveUserId = (userId || getJourneyUserId()).toString().trim().toLowerCase();
 
   const defaultRepoName = `makemistakes-${pid.toLowerCase()}`;
 

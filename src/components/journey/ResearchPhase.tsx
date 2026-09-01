@@ -133,6 +133,8 @@ interface ResearchPhaseProps {
   userId?: string;
 }
 
+import { getJourneyUserId } from "@/lib/journeyUser";
+
 export default function ResearchPhase({
   onComplete,
   onBackToJourney,
@@ -140,7 +142,7 @@ export default function ResearchPhase({
   userId,
 }: ResearchPhaseProps) {
   const pid = problemData?.problemId ?? "";
-  const effectiveUserId = (userId || "default_user").toString().trim().toLowerCase();
+  const effectiveUserId = (userId || getJourneyUserId()).toString().trim().toLowerCase();
   const storageKey = pid && effectiveUserId ? `makemistakes_research_${effectiveUserId}_${pid}` : null;
 
   // Mandatory Research Evidence URL state

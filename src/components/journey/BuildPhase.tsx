@@ -11,12 +11,14 @@ interface BuildPhaseProps {
   onComplete: () => void;
   onBackToJourney?: () => void;
   problemData?: ProblemData | null;
+  userId?: string;
 }
 
 export default function BuildPhase({
   onComplete,
   onBackToJourney,
   problemData,
+  userId,
 }: BuildPhaseProps) {
   const workspace = useMemo(() => deriveBuildWorkspace(problemData), [problemData]);
 

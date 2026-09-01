@@ -109,6 +109,8 @@ const INITIAL_ROADMAP: RoadmapPhaseItem[] = [
   { id: "r4", name: "Phase 4" },
 ];
 
+import { getJourneyUserId } from "@/lib/journeyUser";
+
 export default function PlanPhase({
   onComplete,
   onBackToJourney,
@@ -116,7 +118,7 @@ export default function PlanPhase({
   userId,
 }: PlanPhaseProps) {
   const pid = problemData?.problemId ?? "";
-  const effectiveUserId = (userId || "default_user").toString().trim().toLowerCase();
+  const effectiveUserId = (userId || getJourneyUserId()).toString().trim().toLowerCase();
   const storageKey = pid && effectiveUserId ? `makemistakes_plan_${effectiveUserId}_${pid}` : null;
 
   // 1. Architecture Modules State

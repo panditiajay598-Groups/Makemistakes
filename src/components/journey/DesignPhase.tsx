@@ -24,6 +24,7 @@ import {
 } from "lucide-react";
 
 import { ProblemData } from "@/lib/problemContent";
+import { getJourneyUserId } from "@/lib/journeyUser";
 
 interface DesignPhaseProps {
   onComplete: () => void;
@@ -100,7 +101,7 @@ export default function DesignPhase({
   userId,
 }: DesignPhaseProps) {
   const pid = problemData?.problemId ?? "";
-  const effectiveUserId = (userId || "default_user").toString().trim().toLowerCase();
+  const effectiveUserId = (userId || getJourneyUserId()).toString().trim().toLowerCase();
   const storageKey = pid && effectiveUserId ? `makemistakes_design_${effectiveUserId}_${pid}` : null;
 
   // Section 1: Product Goal

@@ -50,6 +50,8 @@ const EMPTY_BACKLOG: BacklogItem[] = [
   },
 ];
 
+import { getJourneyUserId } from "@/lib/journeyUser";
+
 export default function ImprovePhase({
   onComplete,
   onBackToJourney,
@@ -57,7 +59,7 @@ export default function ImprovePhase({
   userId,
 }: ImprovePhaseProps) {
   const pid = problemData?.problemId ?? "";
-  const effectiveUserId = (userId || "default_user").toString().trim().toLowerCase();
+  const effectiveUserId = (userId || getJourneyUserId()).toString().trim().toLowerCase();
   const storageKey = pid && effectiveUserId ? `makemistakes_improve_${effectiveUserId}_${pid}` : null;
 
   // Section 1: Version 1.1 Priority Backlog

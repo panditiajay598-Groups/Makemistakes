@@ -25,11 +25,13 @@ import { ProblemData } from "@/lib/problemContent";
 interface PortfolioShowcaseProps {
   onBackToDashboard?: () => void;
   problemData?: ProblemData | null;
+  userId?: string;
 }
 
 export default function PortfolioShowcase({
   onBackToDashboard,
   problemData,
+  userId,
 }: PortfolioShowcaseProps) {
   const router = useRouter();
   const pid = problemData?.problemId ?? "";

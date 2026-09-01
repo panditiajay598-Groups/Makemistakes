@@ -45,6 +45,8 @@ const INITIAL_CHECKLIST: DeploymentChecklistItem[] = [
   { id: "d5", text: "Ran sanity test on live URL", checked: false },
 ];
 
+import { getJourneyUserId } from "@/lib/journeyUser";
+
 export default function DeployPhase({
   onComplete,
   onBackToJourney,
@@ -52,7 +54,7 @@ export default function DeployPhase({
   userId,
 }: DeployPhaseProps) {
   const pid = problemData?.problemId ?? "";
-  const effectiveUserId = (userId || "default_user").toString().trim().toLowerCase();
+  const effectiveUserId = (userId || getJourneyUserId()).toString().trim().toLowerCase();
   const storageKey = pid && effectiveUserId ? `makemistakes_deploy_${effectiveUserId}_${pid}` : null;
 
   // Section 1: Push Code to GitHub

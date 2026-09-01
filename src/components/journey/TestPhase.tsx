@@ -57,6 +57,8 @@ const EMPTY_SCENARIOS: TestScenario[] = [
   },
 ];
 
+import { getJourneyUserId } from "@/lib/journeyUser";
+
 export default function TestPhase({
   onComplete,
   onBackToJourney,
@@ -64,7 +66,7 @@ export default function TestPhase({
   userId,
 }: TestPhaseProps) {
   const pid = problemData?.problemId ?? "";
-  const effectiveUserId = (userId || "default_user").toString().trim().toLowerCase();
+  const effectiveUserId = (userId || getJourneyUserId()).toString().trim().toLowerCase();
   const storageKey = pid && effectiveUserId ? `makemistakes_test_${effectiveUserId}_${pid}` : null;
 
   // Section 1: Test Objective
