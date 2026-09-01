@@ -161,14 +161,14 @@ export default function DesignPhase({
           const json = await res.json();
           const dData = json?.phases?.design;
           if (isSubscribed && dData) {
-            if (dData.productGoal) setProductGoal(dData.productGoal);
-            if (Array.isArray(dData.selectedUsers)) setSelectedUsers(dData.selectedUsers);
-            if (dData.userImportance) setUserImportance(dData.userImportance);
-            if (Array.isArray(dData.v1Features)) setV1Features(dData.v1Features);
-            if (Array.isArray(dData.screens) && dData.screens.length > 0) setScreens(dData.screens);
-            if (Array.isArray(dData.journeySteps) && dData.journeySteps.length > 0) setJourneySteps(dData.journeySteps);
-            if (Array.isArray(dData.sketches) && dData.sketches.length > 0) setSketches(dData.sketches);
-            if (dData.designDecisions) setDesignDecisions(dData.designDecisions);
+            setProductGoal(dData.productGoal || "");
+            setSelectedUsers(Array.isArray(dData.selectedUsers) ? dData.selectedUsers : []);
+            setUserImportance(dData.userImportance || "");
+            setV1Features(Array.isArray(dData.v1Features) ? dData.v1Features : []);
+            setScreens(Array.isArray(dData.screens) && dData.screens.length > 0 ? dData.screens : EMPTY_SCREENS);
+            setJourneySteps(Array.isArray(dData.journeySteps) && dData.journeySteps.length > 0 ? dData.journeySteps : EMPTY_JOURNEY);
+            setSketches(Array.isArray(dData.sketches) && dData.sketches.length > 0 ? dData.sketches : EMPTY_SKETCHES);
+            setDesignDecisions(dData.designDecisions || "");
             return;
           }
         }
@@ -182,14 +182,14 @@ export default function DesignPhase({
           const saved = localStorage.getItem(storageKey);
           if (saved && isSubscribed) {
             const parsed = JSON.parse(saved);
-            if (parsed.productGoal) setProductGoal(parsed.productGoal);
-            if (Array.isArray(parsed.selectedUsers)) setSelectedUsers(parsed.selectedUsers);
-            if (parsed.userImportance) setUserImportance(parsed.userImportance);
-            if (Array.isArray(parsed.v1Features)) setV1Features(parsed.v1Features);
-            if (Array.isArray(parsed.screens)) setScreens(parsed.screens);
-            if (Array.isArray(parsed.journeySteps)) setJourneySteps(parsed.journeySteps);
-            if (Array.isArray(parsed.sketches)) setSketches(parsed.sketches);
-            if (parsed.designDecisions) setDesignDecisions(parsed.designDecisions);
+            setProductGoal(parsed.productGoal || "");
+            setSelectedUsers(Array.isArray(parsed.selectedUsers) ? parsed.selectedUsers : []);
+            setUserImportance(parsed.userImportance || "");
+            setV1Features(Array.isArray(parsed.v1Features) ? parsed.v1Features : []);
+            setScreens(Array.isArray(parsed.screens) && parsed.screens.length > 0 ? parsed.screens : EMPTY_SCREENS);
+            setJourneySteps(Array.isArray(parsed.journeySteps) && parsed.journeySteps.length > 0 ? parsed.journeySteps : EMPTY_JOURNEY);
+            setSketches(Array.isArray(parsed.sketches) && parsed.sketches.length > 0 ? parsed.sketches : EMPTY_SKETCHES);
+            setDesignDecisions(parsed.designDecisions || "");
           }
         } catch {}
       }

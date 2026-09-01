@@ -164,12 +164,12 @@ export default function PlanPhase({
           const json = await res.json();
           const pData = json?.phases?.plan;
           if (isSubscribed && pData) {
-            if (Array.isArray(pData.modules) && pData.modules.length > 0) setModules(pData.modules);
-            if (pData.techDecisions) setTechDecisions({ ...INITIAL_TECH, ...pData.techDecisions });
-            if (Array.isArray(pData.dbEntities) && pData.dbEntities.length > 0) setDbEntities(pData.dbEntities);
-            if (Array.isArray(pData.flowSteps) && pData.flowSteps.length > 0) setFlowSteps(pData.flowSteps);
-            if (Array.isArray(pData.roadmapPhases) && pData.roadmapPhases.length > 0) setRoadmapPhases(pData.roadmapPhases);
-            if (pData.risksText) setRisksText(pData.risksText);
+            setModules(Array.isArray(pData.modules) && pData.modules.length > 0 ? pData.modules : INITIAL_MODULES);
+            setTechDecisions(pData.techDecisions ? { ...INITIAL_TECH, ...pData.techDecisions } : INITIAL_TECH);
+            setDbEntities(Array.isArray(pData.dbEntities) && pData.dbEntities.length > 0 ? pData.dbEntities : INITIAL_DB_ENTITIES);
+            setFlowSteps(Array.isArray(pData.flowSteps) && pData.flowSteps.length > 0 ? pData.flowSteps : INITIAL_FLOW_STEPS);
+            setRoadmapPhases(Array.isArray(pData.roadmapPhases) && pData.roadmapPhases.length > 0 ? pData.roadmapPhases : INITIAL_ROADMAP);
+            setRisksText(pData.risksText || "");
             return;
           }
         }
@@ -183,12 +183,12 @@ export default function PlanPhase({
           const saved = localStorage.getItem(storageKey);
           if (saved && isSubscribed) {
             const parsed = JSON.parse(saved);
-            if (Array.isArray(parsed.modules)) setModules(parsed.modules);
-            if (parsed.techDecisions) setTechDecisions(parsed.techDecisions);
-            if (Array.isArray(parsed.dbEntities)) setDbEntities(parsed.dbEntities);
-            if (Array.isArray(parsed.flowSteps)) setFlowSteps(parsed.flowSteps);
-            if (Array.isArray(parsed.roadmapPhases)) setRoadmapPhases(parsed.roadmapPhases);
-            if (parsed.risksText) setRisksText(parsed.risksText);
+            setModules(Array.isArray(parsed.modules) && parsed.modules.length > 0 ? parsed.modules : INITIAL_MODULES);
+            setTechDecisions(parsed.techDecisions ? { ...INITIAL_TECH, ...parsed.techDecisions } : INITIAL_TECH);
+            setDbEntities(Array.isArray(parsed.dbEntities) && parsed.dbEntities.length > 0 ? parsed.dbEntities : INITIAL_DB_ENTITIES);
+            setFlowSteps(Array.isArray(parsed.flowSteps) && parsed.flowSteps.length > 0 ? parsed.flowSteps : INITIAL_FLOW_STEPS);
+            setRoadmapPhases(Array.isArray(parsed.roadmapPhases) && parsed.roadmapPhases.length > 0 ? parsed.roadmapPhases : INITIAL_ROADMAP);
+            setRisksText(parsed.risksText || "");
           }
         } catch {}
       }
