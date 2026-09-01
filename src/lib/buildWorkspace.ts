@@ -195,12 +195,16 @@ export default function WithNavbar() {
   );
 }
 `
-            : `/**
- * YOUR WRITE STEP — navbar for ${productName}.
- * Requirements: brand name + primary CTA.
- */
-export function Navbar() {
-  return <p className="text-sm text-amber-700">${todo}</p>;
+            : `export function Navbar() {
+  return (
+    <header className="h-14 border-b flex items-center justify-between px-6 bg-white shadow-sm">
+      <div className="font-bold text-teal-800 text-lg">${productName}</div>
+      <nav className="flex items-center gap-4 text-sm font-medium">
+        <a href="#home" className="text-zinc-600 hover:text-zinc-900">Home</a>
+        <button className="bg-teal-700 text-white px-3.5 py-1.5 rounded-lg text-xs font-semibold hover:bg-teal-600 transition-colors">Get Started</button>
+      </nav>
+    </header>
+  );
 }
 `,
         },
@@ -232,12 +236,17 @@ export default function HeroPage() {
   );
 }
 `
-            : `/**
- * YOUR WRITE STEP — hero for ${productName}.
- * Requirements: headline, short supporting text, primary CTA button.
- */
-export function Hero() {
-  return <p className="text-sm text-amber-700">${todo}</p>;
+            : `export function Hero() {
+  return (
+    <section className="py-14 px-6 text-center space-y-4 max-w-xl mx-auto">
+      <p className="text-xs font-mono text-teal-700 uppercase font-semibold">Welcome to ${productName}</p>
+      <h1 className="text-3xl font-bold tracking-tight text-zinc-900">${tagline.slice(0, 72)}${tagline.length > 72 ? "…" : ""}</h1>
+      <p className="text-sm text-zinc-600">Build ${productName} as a focused MVP that solves this for real users.</p>
+      <button className="bg-teal-700 text-white px-5 py-2.5 rounded-lg text-sm font-semibold hover:bg-teal-600 transition-colors shadow-sm">
+        Explore Product
+      </button>
+    </section>
+  );
 }
 `,
         },
@@ -302,39 +311,78 @@ export function ${noun}Form() {
         );
       }
 
-      // Student write: blank form — user must implement everything
+      // Student write: starter form component
       return wrap(
         {
           "app/page.tsx": `import { ${noun}Form } from "./${noun}Form";
 
-/** Page shell only — write the real UI in ${noun}Form.tsx */
 export default function Create${noun}Page() {
   return (
     <main className="p-6 max-w-lg mx-auto space-y-4 bg-white min-h-screen">
-      <h1 className="text-2xl font-bold">New ${noun} — ${productName}</h1>
-      <p className="text-sm text-zinc-500">Your write step: open ${noun}Form.tsx and build the form.</p>
+      <h1 className="text-2xl font-bold text-zinc-900">New ${noun} — ${productName}</h1>
+      <p className="text-sm text-zinc-600">Create a new ${noun.toLowerCase()} with built-in validation.</p>
       <${noun}Form />
     </main>
   );
 }
 `,
-          [`app/${noun}Form.tsx`]: `/**
- * YOUR WRITE STEP — do not leave this empty.
- *
- * Build a create-${noun.toLowerCase()} form for ${productName}.
- * Requirements:
- * 1) ${noun} title field
- * 2) Primary submit / Create button
- * 3) Basic empty-field feedback (error message)
- *
- * Tip: use useState for the title + error text.
- */
+          [`app/${noun}Form.tsx`]: `import { useState } from "react";
+
 export function ${noun}Form() {
-  return <p className="text-sm text-amber-700">${todo}</p>;
+  const [title, setTitle] = useState("");
+  const [error, setError] = useState("");
+  const [saved, setSaved] = useState(false);
+
+  function onSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!title.trim()) {
+      setError("Please enter a title.");
+      setSaved(false);
+      return;
+    }
+    setError("");
+    setSaved(true);
+  }
+
+  return (
+    <form onSubmit={onSubmit} className="space-y-4 border border-zinc-200 rounded-2xl p-5 bg-white shadow-sm">
+      <div>
+        <label className="block text-xs font-semibold text-zinc-700 mb-1">
+          ${noun} Title
+        </label>
+        <input
+          type="text"
+          value={title}
+          onChange={(e) => setTitle(e.target.value)}
+          placeholder="e.g. Priority ${noun}"
+          className="w-full border border-zinc-300 rounded-lg px-3.5 py-2 text-sm text-zinc-900 focus:outline-none focus:ring-2 focus:ring-teal-500"
+        />
+      </div>
+
+      {error ? (
+        <p className="text-xs font-semibold text-rose-600 bg-rose-50 border border-rose-200 rounded-lg p-2.5">
+          {error}
+        </p>
+      ) : null}
+
+      {saved ? (
+        <p className="text-xs font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-lg p-2.5">
+          ✓ ${noun} created successfully!
+        </p>
+      ) : null}
+
+      <button
+        type="submit"
+        className="w-full bg-teal-700 hover:bg-teal-600 text-white rounded-lg py-2.5 font-semibold text-sm transition-colors shadow-sm cursor-pointer"
+      >
+        Create ${noun}
+      </button>
+    </form>
+  );
 }
 `,
         },
-        [`Create${noun}Page (page.tsx)`, `└── ${noun}Form ← you write this`]
+        [`Create${noun}Page (page.tsx)`, `└── ${noun}Form`]
       );
 
     case "list":
@@ -382,24 +430,32 @@ export default function ${noun}ListPage() {
 export default function ${noun}ListPage() {
   return (
     <main className="p-6 space-y-4 bg-white min-h-screen">
-      <h1 className="text-2xl font-bold">${noun}s — ${productName}</h1>
-      <p className="text-sm text-zinc-500">Your write step: implement ${noun}List.tsx</p>
+      <h1 className="text-2xl font-bold text-zinc-900">${noun}s — ${productName}</h1>
       <${noun}List />
     </main>
   );
 }
 `,
-          [`app/${noun}List.tsx`]: `/**
- * YOUR WRITE STEP
- * Show a list of ${noun.toLowerCase()}s (or an empty state).
- * Requirements: list area, empty-state copy, status/label per item.
- */
-export function ${noun}List() {
-  return <p className="text-sm text-amber-700">${todo}</p>;
+          [`app/${noun}List.tsx`]: `export function ${noun}List() {
+  const items = [
+    { id: "1", title: "Sample ${noun} A", status: "Open" },
+    { id: "2", title: "Sample ${noun} B", status: "Completed" },
+  ];
+
+  return (
+    <div className="space-y-3">
+      {items.map((item) => (
+        <div key={item.id} className="p-4 border border-zinc-200 rounded-xl flex justify-between items-center bg-white shadow-sm">
+          <span className="font-medium text-sm text-zinc-900">{item.title}</span>
+          <span className="text-xs px-2.5 py-1 bg-teal-50 text-teal-700 border border-teal-200 rounded-full font-semibold">{item.status}</span>
+        </div>
+      ))}
+    </div>
+  );
 }
 `,
         },
-        [`${noun}ListPage (page.tsx)`, `└── ${noun}List ← you write this`]
+        [`${noun}ListPage (page.tsx)`, `└── ${noun}List`]
       );
 
     case "detail":
@@ -420,15 +476,15 @@ export function ${noun}List() {
   );
 }
 `
-            : `/**
- * YOUR WRITE STEP — build a ${noun} detail card.
- * Requirements: title, status badge, short note, back action.
- */
-export default function ${noun}DetailPage() {
-  // ${todo}
+            : `export default function ${noun}DetailPage() {
   return (
-    <main className="p-6 bg-white min-h-screen">
-      <p className="text-sm text-zinc-500">Implement the detail card here.</p>
+    <main className="p-6 max-w-md mx-auto space-y-4 bg-white min-h-screen">
+      <div className="border border-zinc-200 rounded-2xl p-5 space-y-3 shadow-sm">
+        <h1 className="text-xl font-bold text-zinc-900">Priority ${noun}</h1>
+        <span className="inline-block text-xs font-semibold px-2.5 py-0.5 rounded-full bg-teal-50 text-teal-700 border border-teal-200">Open</span>
+        <p className="text-sm text-zinc-600">A detailed view of this ${noun.toLowerCase()} for ${productName}.</p>
+        <button className="w-full bg-teal-700 hover:bg-teal-600 text-white font-semibold py-2 rounded-lg text-xs transition-colors">Back to List</button>
+      </div>
     </main>
   );
 }
