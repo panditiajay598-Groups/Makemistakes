@@ -138,24 +138,29 @@ function scaffoldForTask(opts: {
     case "shell":
       return wrap(
         {
-          "app/page.tsx": provided
-            ? `export default function AppShell() {
+          "app/page.tsx": `export default function AppShell() {
   return (
-    <main className="min-h-screen bg-white text-zinc-900">
-      <div className="max-w-3xl mx-auto p-8 space-y-4">
-        <h1 className="text-3xl font-bold">${productName}</h1>
-        <p className="text-zinc-600">${tagline.slice(0, 120)}${tagline.length > 120 ? "…" : ""}</p>
-        <p className="text-sm text-zinc-500">App shell is ready. Continue adding your features.</p>
+    <main className="min-h-screen bg-slate-950 text-slate-100 flex flex-col items-center justify-center p-8">
+      <div className="max-w-2xl w-full text-center space-y-6 bg-slate-900/80 border border-slate-800 rounded-3xl p-10 shadow-2xl backdrop-blur-xl">
+        <div className="inline-flex items-center gap-2 px-3.5 py-1 rounded-full bg-teal-500/10 border border-teal-500/30 text-teal-400 text-xs font-semibold">
+          <span className="h-2 w-2 rounded-full bg-teal-400 animate-pulse" />
+          ${productName} Product Workspace
+        </div>
+        <h1 className="text-4xl sm:text-5xl font-extrabold tracking-tight text-white">
+          Welcome to ${productName}
+        </h1>
+        <p className="text-slate-400 text-base leading-relaxed max-w-lg mx-auto">
+          Build and customize your application. Use the Monaco editor or instruct Nova AI to synthesize components, create forms, and write backend APIs.
+        </p>
+        <div className="flex items-center justify-center gap-3 pt-4">
+          <button className="px-6 py-3 rounded-xl bg-teal-500 hover:bg-teal-400 text-slate-950 font-bold text-sm transition-all shadow-lg cursor-pointer">
+            Explore Features
+          </button>
+          <button className="px-6 py-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 font-semibold text-sm transition-all border border-slate-700 cursor-pointer">
+            Documentation
+          </button>
+        </div>
       </div>
-    </main>
-  );
-}
-`
-            : `export default function AppShell() {
-  // TODO: create a main layout for ${productName}
-  return (
-    <main className="min-h-screen p-8">
-      <p>${todo}</p>
     </main>
   );
 }
