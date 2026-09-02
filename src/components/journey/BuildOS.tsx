@@ -131,7 +131,7 @@ export default function BuildOS({ problemId, productName: propName, problemData,
   // UI Panels & IDE State
   const [showExplorer, setShowExplorer] = useState(true);
   const [showNovaPanel, setShowNovaPanel] = useState(true);
-  const [showRoadmapSection, setShowRoadmapSection] = useState(true);
+  const [showRoadmapSection, setShowRoadmapSection] = useState(false);
   const [openTabs, setOpenTabs] = useState<string[]>(["app/page.tsx"]);
   const [activeBottomTab, setActiveBottomTab] = useState<"preview" | "console" | "tests">("preview");
   const [deviceMode, setDeviceMode] = useState<"desktop" | "tablet" | "mobile">("desktop");
@@ -696,9 +696,9 @@ export default function BuildOS({ problemId, productName: propName, problemData,
           {/* Active Task Pill */}
           <div className="hidden md:flex items-center gap-1.5 px-2 py-0.5 bg-zinc-900/90 border border-zinc-800 rounded text-[11px] text-zinc-300">
             <span className="px-1.5 py-0.2 bg-teal-950 text-teal-400 font-mono text-[10px] font-bold rounded">
-              Step {activeMissionIndex + 1}/{workspace.missions.length}
+              IDE Workspace
             </span>
-            <span className="truncate max-w-[180px] font-medium">{activeMission.title}</span>
+            <span className="truncate max-w-[180px] font-medium">{productName} App</span>
           </div>
         </div>
 
@@ -1166,12 +1166,9 @@ export default function BuildOS({ problemId, productName: propName, problemData,
 
               {/* Step Context Card */}
               <div className="p-3 border-b border-zinc-800/80 space-y-1.5 bg-[#06080d]">
-                <span className="text-[10px] font-bold uppercase tracking-wider text-teal-400">What This Means</span>
-                <p className="text-xs text-zinc-300 leading-relaxed">{activeMission.whatThisMeans}</p>
-                <p className="text-[11px] text-zinc-500 italic">
-                  {activeMission.ownership === "provided"
-                    ? "Read code, click Run, check validation, continue."
-                    : "Write your code, then click Run and Validate Task."}
+                <span className="text-[10px] font-bold uppercase tracking-wider text-teal-400">BuildOS Workspace</span>
+                <p className="text-xs text-zinc-300 leading-relaxed">
+                  Ask Nova AI to build features, write components, or fix errors. Apply code proposals directly into your project.
                 </p>
               </div>
 

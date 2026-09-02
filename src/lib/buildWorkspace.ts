@@ -143,10 +143,9 @@ function scaffoldForTask(opts: {
   return (
     <main className="min-h-screen bg-white text-zinc-900">
       <div className="max-w-3xl mx-auto p-8 space-y-4">
-        <p className="text-xs font-mono text-teal-700 uppercase tracking-wide">Provided by MakeMistakes</p>
         <h1 className="text-3xl font-bold">${productName}</h1>
         <p className="text-zinc-600">${tagline.slice(0, 120)}${tagline.length > 120 ? "…" : ""}</p>
-        <p className="text-sm text-zinc-500">App shell is ready. Continue to the next step.</p>
+        <p className="text-sm text-zinc-500">App shell is ready. Continue adding your features.</p>
       </div>
     </main>
   );
@@ -289,7 +288,6 @@ export function ${noun}Form() {
 
   return (
     <form onSubmit={onSubmit} className="space-y-3 border rounded-2xl p-4">
-      <p className="text-[10px] font-mono text-teal-700 uppercase">Provided create form</p>
       <label className="block text-xs font-semibold text-zinc-600">${noun} title</label>
       <input
         value={title}
@@ -407,7 +405,6 @@ export default function ${noun}ListPage() {
   ];
   return (
     <section className="space-y-2">
-      <p className="text-[10px] font-mono text-teal-700 uppercase">Provided list</p>
       {items.map((item) => (
         <div key={item.id} className="flex justify-between border rounded-xl px-4 py-3 bg-zinc-50">
           <span className="text-sm font-semibold">{item.title}</span>
@@ -465,7 +462,6 @@ export default function ${noun}ListPage() {
             ? `export default function ${noun}DetailPage() {
   return (
     <main className="p-6 max-w-md mx-auto space-y-4 bg-white min-h-screen">
-      <p className="text-[10px] font-mono text-teal-700 uppercase">Provided detail</p>
       <div className="border rounded-2xl p-5 space-y-2">
         <h1 className="text-xl font-bold">Priority ${noun}</h1>
         <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-teal-100 text-teal-800">Open</span>
@@ -501,7 +497,6 @@ export default function ${noun}ListPage() {
   return (
     <main className="min-h-screen flex items-center justify-center p-6 bg-white">
       <form className="w-full max-w-md space-y-3 border rounded-2xl p-6" onSubmit={(e) => e.preventDefault()}>
-        <p className="text-[10px] font-mono text-teal-700 uppercase">Provided auth shell</p>
         <h1 className="text-xl font-bold">Sign in — ${productName}</h1>
         <input type="email" placeholder="Email" className="w-full border rounded-lg px-3 py-2 text-sm" />
         <input type="password" placeholder="Password" className="w-full border rounded-lg px-3 py-2 text-sm" />
