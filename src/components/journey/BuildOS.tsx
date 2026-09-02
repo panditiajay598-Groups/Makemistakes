@@ -137,15 +137,85 @@ export default function BuildOS({ problemId, productName: propName, problemData,
   const [deviceMode, setDeviceMode] = useState<"desktop" | "tablet" | "mobile">("desktop");
   const [copied, setCopied] = useState(false);
 
-  // Nova AI Chat State
+  // Nova AI Chat & Code Proposals State
+  const [appliedProposals, setAppliedProposals] = useState<Set<string>>(new Set());
   const [novaMessages, setNovaMessages] = useState<Array<{ role: "user" | "assistant"; content: string }>>([
     {
       role: "assistant",
-      content: `Hi! I'm Nova — your beginner-friendly mentor for ProductOS.\n\nBeginner · ${workspace.providedCount} steps provided by MakeMistakes · ${workspace.studentCount} steps you write.\n\nI'll explain each step: what changed, what it means, and what you do next.\n\nOpen a step on the left and ask me anything.`,
+      content: `Welcome to ${workspace.productName} in BuildOS!\n\nI'm Nova — your AI product coding mentor. You own this workspace.\n\nAsk me to build landing sections, create forms, write APIs, or debug TypeScript errors. I'll propose file changes that you can review and apply directly into your project workspace!`,
     },
   ]);
   const [novaInput, setNovaInput] = useState("");
   const [novaLoading, setNovaLoading] = useState(false);
+
+  const parseNovaProposals = useCallback((text: string) => {
+    if (!text) return [];
+    const proposals: Array<{ id: string; filePath: string; code: string }> = [];
+    const regex = /```(?:tsx|jsx|typescript|javascript|ts|js)?[\r\n]+([\s\S]*?)```/g;
+    let match;
+    let idx = 0;
+    while ((match = regex.exec(text)) !== null) {
+      const rawCode = match[1] || "";
+      const fileHeaderMatch = rawCode.match(/(?:\/\/|\/\*)\s*FILE:\s*([^\r\n]+)/i);
+      let filePath = "";
+      if (fileHeaderMatch) {
+        filePath = fileHeaderMatch[1].trim();
+      } else {
+        const lineMatch = rawCode.match(/^[\/\#\*]*\s*([a-zA-Z0-9_\-\/]+\.(?:tsx|ts|jsx|js|css|json))/m);
+        if (lineMatch) filePath = lineMatch[1].trim();
+      }
+
+      if (filePath && rawCode.trim().length > 10) {
+        idx++;
+        proposals.push({
+          id: `prop-${idx}-${filePath.replace(/[^a-zA-Z0-9]/g, "_")}`,
+          filePath,
+          code: rawCode.trim(),
+        });
+      }
+    }
+    return proposals;
+  }, []);
+
+  const applyNovaProposal = async (proposal: { id: string; filePath: string; code: string }) => {
+    try {
+      const res = await fetch("/api/buildos/files", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          userId,
+          problemId,
+          path: proposal.filePath,
+          content: proposal.code,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok || data.error) {
+        alert(`Failed to apply proposal: ${data.error || "Unknown error"}`);
+        return;
+      }
+
+      if (!openTabs.includes(proposal.filePath)) {
+        setOpenTabs((prev) => [...prev, proposal.filePath]);
+      }
+      setActivePath(proposal.filePath);
+      setContent(proposal.code);
+
+      setAppliedProposals((prev) => new Set(prev).add(proposal.id));
+
+      const treeRes = await fetch(
+        `/api/buildos/files?userId=${encodeURIComponent(userId)}&problemId=${encodeURIComponent(problemId)}`
+      );
+      if (treeRes.ok) {
+        const treeData = await treeRes.json();
+        if (treeData.tree) setTree(treeData.tree);
+      }
+
+      setLogs((prev) => [...prev, `[${new Date().toLocaleTimeString()}] ✓ Applied Nova code proposal to ${proposal.filePath}`]);
+    } catch (err: any) {
+      alert(`Failed to apply proposal: ${err.message}`);
+    }
+  };
 
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const previewRef = useRef<HTMLIFrameElement>(null);
@@ -1107,18 +1177,74 @@ export default function BuildOS({ problemId, productName: propName, problemData,
 
               {/* Chat Stream */}
               <div className="flex-1 overflow-y-auto p-3 space-y-3 min-h-0 bg-[#080a0f]">
-                {novaMessages.map((msg, i) => (
-                  <div
-                    key={i}
-                    className={`p-2.5 rounded-lg text-xs leading-relaxed ${
-                      msg.role === "user"
-                        ? "bg-teal-950/60 border border-teal-800/60 text-teal-100 ml-4"
-                        : "bg-zinc-900/60 border border-zinc-800/60 text-zinc-200"
-                    }`}
-                  >
-                    <p className="whitespace-pre-wrap">{msg.content}</p>
-                  </div>
-                ))}
+                {novaMessages.map((msg, i) => {
+                  const proposals = msg.role === "assistant" ? parseNovaProposals(msg.content) : [];
+                  return (
+                    <div key={i} className="space-y-2">
+                      <div
+                        className={`p-2.5 rounded-lg text-xs leading-relaxed ${
+                          msg.role === "user"
+                            ? "bg-teal-950/60 border border-teal-800/60 text-teal-100 ml-4"
+                            : "bg-zinc-900/60 border border-zinc-800/60 text-zinc-200"
+                        }`}
+                      >
+                        <p className="whitespace-pre-wrap">{msg.content}</p>
+                      </div>
+
+                      {/* Render Interactive Code Proposals */}
+                      {proposals.map((prop) => {
+                        const isApplied = appliedProposals.has(prop.id);
+                        return (
+                          <div
+                            key={prop.id}
+                            className="bg-[#0b0e17] border border-teal-800/60 rounded-xl p-3 space-y-2.5 shadow-md ml-1"
+                          >
+                            <div className="flex items-center justify-between">
+                              <div className="flex items-center gap-1.5 text-teal-400 font-mono text-[11px] font-semibold">
+                                <FileCode className="h-3.5 w-3.5 text-teal-400" />
+                                <span>{prop.filePath}</span>
+                              </div>
+                              <span className="text-[9px] font-mono uppercase px-1.5 py-0.5 rounded bg-teal-950 text-teal-300 border border-teal-800/50">
+                                Code Proposal
+                              </span>
+                            </div>
+
+                            <div className="bg-[#05070a] border border-zinc-800/80 rounded-lg p-2 max-h-32 overflow-y-auto font-mono text-[10px] text-zinc-300">
+                              <pre>{prop.code.slice(0, 250)}{prop.code.length > 250 ? "\n..." : ""}</pre>
+                            </div>
+
+                            <div className="flex items-center gap-2 pt-0.5">
+                              {isApplied ? (
+                                <div className="flex items-center gap-1.5 text-xs text-emerald-400 font-semibold bg-emerald-950/60 border border-emerald-800/60 px-3 py-1.5 rounded-lg w-full justify-center">
+                                  <Check className="h-3.5 w-3.5 stroke-[3]" />
+                                  <span>Applied to Workspace</span>
+                                </div>
+                              ) : (
+                                <>
+                                  <button
+                                    type="button"
+                                    onClick={() => applyNovaProposal(prop)}
+                                    className="flex-1 flex items-center justify-center gap-1.5 bg-emerald-500 hover:bg-emerald-400 text-zinc-950 font-bold px-3 py-1.5 rounded-lg text-xs transition-colors shadow cursor-pointer"
+                                  >
+                                    <Check className="h-3.5 w-3.5 stroke-[3]" />
+                                    <span>Apply Changes</span>
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => setAppliedProposals((prev) => new Set(prev).add(prop.id))}
+                                    className="px-2.5 py-1.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded-lg text-xs transition-colors cursor-pointer"
+                                  >
+                                    Reject
+                                  </button>
+                                </>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  );
+                })}
                 {novaLoading && (
                   <div className="flex items-center gap-2 p-2 text-xs text-zinc-400">
                     <Loader2 className="h-3.5 w-3.5 animate-spin text-teal-400" />
@@ -1133,24 +1259,24 @@ export default function BuildOS({ problemId, productName: propName, problemData,
                 <div className="flex flex-wrap gap-1 text-[10px]">
                   <button
                     type="button"
-                    onClick={() => sendNovaMessage("What does this step mean?")}
-                    className="px-2 py-1 rounded bg-zinc-800/80 hover:bg-zinc-700/80 text-zinc-300 transition-colors"
+                    onClick={() => sendNovaMessage("Create a responsive Navigation Bar component for " + productName)}
+                    className="px-2 py-1 rounded bg-teal-950/80 hover:bg-teal-900/80 text-teal-300 border border-teal-800/50 transition-colors"
                   >
-                    Explain step
+                    + Create Navbar
                   </button>
                   <button
                     type="button"
-                    onClick={() => sendNovaMessage("Why is Preview empty?")}
+                    onClick={() => sendNovaMessage("Build a Create Form component for " + productName)}
                     className="px-2 py-1 rounded bg-zinc-800/80 hover:bg-zinc-700/80 text-zinc-300 transition-colors"
                   >
-                    Why preview empty?
+                    + Build Form
                   </button>
                   <button
                     type="button"
-                    onClick={() => sendNovaMessage("What should I change next?")}
+                    onClick={() => sendNovaMessage("Fix TypeScript and import issues in active file")}
                     className="px-2 py-1 rounded bg-zinc-800/80 hover:bg-zinc-700/80 text-zinc-300 transition-colors"
                   >
-                    What's next?
+                    Fix errors
                   </button>
                 </div>
 

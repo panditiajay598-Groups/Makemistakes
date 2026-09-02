@@ -85,7 +85,16 @@ The student is building '${name}' (${level} level).
 Current active file: '${file}'.
 Overall objective: ${objective}.
 
-Guide the student with clear, concise, beginner-friendly advice. Explain coding concepts simply and help them debug step-by-step.`;
+When the user asks you to write, build, create, or modify code:
+1. Explain what you are creating in 1-2 friendly sentences.
+2. Format each code block with a top comment specifying the file path:
+\`\`\`tsx
+// FILE: app/Navbar.tsx
+export function Navbar() {
+  ...
+}
+\`\`\`
+3. Keep code modular, clean, and production-ready.`;
 }
 
 export async function POST(req: Request) {
