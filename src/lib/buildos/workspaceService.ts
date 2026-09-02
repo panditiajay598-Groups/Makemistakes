@@ -183,30 +183,21 @@ export async function ensureWorkspace(
         pageContent.includes("Provided by MakeMistakes") ||
         pageContent.includes("Why do micro-SMEs waste") ||
         pageContent.includes("App shell is ready") ||
+        pageContent.includes("HeroScene") ||
+        pageContent.includes("Welcome to PayFlow") ||
+        pageContent.includes("Explore Features") ||
         pageContent.includes("__WRITE_ME__")
       ) {
-        const cleanContent = `export default function AppShell() {
+        const cleanContent = `export default function Page() {
   return (
     <main className="min-h-screen bg-slate-950 text-slate-100 flex flex-col items-center justify-center p-8">
-      <div className="max-w-2xl w-full text-center space-y-6 bg-slate-900/80 border border-slate-800 rounded-3xl p-10 shadow-2xl backdrop-blur-xl">
-        <div className="inline-flex items-center gap-2 px-3.5 py-1 rounded-full bg-teal-500/10 border border-teal-500/30 text-teal-400 text-xs font-semibold">
-          <span className="h-2 w-2 rounded-full bg-teal-400 animate-pulse" />
-          Product Workspace
-        </div>
-        <h1 className="text-4xl sm:text-5xl font-extrabold tracking-tight text-white">
-          Welcome to Your Product
+      <div className="max-w-xl w-full text-center space-y-4 bg-slate-900/80 border border-slate-800 rounded-2xl p-8 shadow-2xl backdrop-blur-xl">
+        <h1 className="text-3xl font-bold text-white">
+          BuildOS Workspace
         </h1>
-        <p className="text-slate-400 text-base leading-relaxed max-w-lg mx-auto">
-          Build and customize your application. Use the Monaco editor or instruct Nova AI to synthesize components, create forms, and write backend APIs.
+        <p className="text-slate-400 text-sm leading-relaxed">
+          Your workspace is initialized. Ask Nova AI to synthesize components, create pages, or build your application features.
         </p>
-        <div className="flex items-center justify-center gap-3 pt-4">
-          <button className="px-6 py-3 rounded-xl bg-teal-500 hover:bg-teal-400 text-slate-950 font-bold text-sm transition-all shadow-lg cursor-pointer">
-            Explore Features
-          </button>
-          <button className="px-6 py-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 font-semibold text-sm transition-all border border-slate-700 cursor-pointer">
-            Documentation
-          </button>
-        </div>
       </div>
     </main>
   );
