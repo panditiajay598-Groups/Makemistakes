@@ -1172,7 +1172,57 @@ export default function BuildOS({ problemId, productName: propName, problemData,
                 </p>
               </div>
 
-              {/* Chat Stream */}
+              {/* Top Prompts & Chat Input Search Bar */}
+              <div className="p-2.5 border-b border-zinc-800/80 bg-[#0b0e15] space-y-2">
+                <form
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    sendNovaMessage();
+                  }}
+                  className="flex items-center gap-1.5"
+                >
+                  <input
+                    type="text"
+                    value={novaInput}
+                    onChange={(e) => setNovaInput(e.target.value)}
+                    placeholder="Ask Nova AI to build or fix..."
+                    className="flex-1 bg-zinc-900 border border-zinc-800 rounded px-2.5 py-1.5 text-xs text-zinc-200 placeholder-zinc-500 outline-none focus:border-teal-500/80"
+                  />
+                  <button
+                    type="submit"
+                    disabled={!novaInput.trim() || novaLoading}
+                    className="p-1.5 rounded bg-teal-500 hover:bg-teal-400 text-zinc-950 font-bold disabled:opacity-40 transition-colors cursor-pointer"
+                  >
+                    <Send className="h-3.5 w-3.5" />
+                  </button>
+                </form>
+
+                <div className="flex flex-wrap gap-1 text-[10px]">
+                  <button
+                    type="button"
+                    onClick={() => sendNovaMessage("Create a responsive Navigation Bar component for " + productName)}
+                    className="px-2 py-1 rounded bg-teal-950/80 hover:bg-teal-900/80 text-teal-300 border border-teal-800/50 transition-colors cursor-pointer"
+                  >
+                    + Create Navbar
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => sendNovaMessage("Build a Create Form component for " + productName)}
+                    className="px-2 py-1 rounded bg-zinc-800/80 hover:bg-zinc-700/80 text-zinc-300 transition-colors cursor-pointer"
+                  >
+                    + Build Form
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => sendNovaMessage("Fix TypeScript and import issues in active file")}
+                    className="px-2 py-1 rounded bg-zinc-800/80 hover:bg-zinc-700/80 text-zinc-300 transition-colors cursor-pointer"
+                  >
+                    Fix errors
+                  </button>
+                </div>
+              </div>
+
+              {/* Chat Stream & Code Proposals */}
               <div className="flex-1 overflow-y-auto p-3 space-y-3 min-h-0 bg-[#080a0f]">
                 {novaMessages.map((msg, i) => {
                   const proposals = msg.role === "assistant" ? parseNovaProposals(msg.content) : [];
@@ -1249,56 +1299,6 @@ export default function BuildOS({ problemId, productName: propName, problemData,
                   </div>
                 )}
                 <div ref={chatBottomRef} />
-              </div>
-
-              {/* Quick Prompts & Chat Input */}
-              <div className="p-2.5 border-t border-zinc-800/80 bg-[#0a0c11] space-y-2">
-                <div className="flex flex-wrap gap-1 text-[10px]">
-                  <button
-                    type="button"
-                    onClick={() => sendNovaMessage("Create a responsive Navigation Bar component for " + productName)}
-                    className="px-2 py-1 rounded bg-teal-950/80 hover:bg-teal-900/80 text-teal-300 border border-teal-800/50 transition-colors"
-                  >
-                    + Create Navbar
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => sendNovaMessage("Build a Create Form component for " + productName)}
-                    className="px-2 py-1 rounded bg-zinc-800/80 hover:bg-zinc-700/80 text-zinc-300 transition-colors"
-                  >
-                    + Build Form
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => sendNovaMessage("Fix TypeScript and import issues in active file")}
-                    className="px-2 py-1 rounded bg-zinc-800/80 hover:bg-zinc-700/80 text-zinc-300 transition-colors"
-                  >
-                    Fix errors
-                  </button>
-                </div>
-
-                <form
-                  onSubmit={(e) => {
-                    e.preventDefault();
-                    sendNovaMessage();
-                  }}
-                  className="flex items-center gap-1.5 pt-1"
-                >
-                  <input
-                    type="text"
-                    value={novaInput}
-                    onChange={(e) => setNovaInput(e.target.value)}
-                    placeholder="Ask Nova AI mentor..."
-                    className="flex-1 bg-zinc-900 border border-zinc-800 rounded px-2.5 py-1.5 text-xs text-zinc-200 placeholder-zinc-500 outline-none focus:border-teal-500/80"
-                  />
-                  <button
-                    type="submit"
-                    disabled={!novaInput.trim() || novaLoading}
-                    className="p-1.5 rounded bg-teal-500 hover:bg-teal-400 text-zinc-950 font-bold disabled:opacity-40 transition-colors"
-                  >
-                    <Send className="h-3.5 w-3.5" />
-                  </button>
-                </form>
               </div>
             </aside>
           )}
