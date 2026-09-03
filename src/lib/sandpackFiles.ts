@@ -102,12 +102,45 @@ export function localNovaFallback(opts: {
   fileCode: string;
   responsibilityLevel?: string;
   buildObjective?: string;
+  mode?: string;
+  problemStatement?: string;
 }): string {
   const q = (opts.question || "").trim().toLowerCase();
   const code = opts.fileCode || "";
   const level = (opts.responsibilityLevel || "foundation").toLowerCase();
   const isAdvanced = level === "advanced" || level === "expert";
-  const objective = opts.buildObjective || opts.statement;
+  const statement = opts.problemStatement || opts.statement || opts.buildObjective || "Solve this product problem";
+  const objective = opts.buildObjective || statement;
+
+  if (opts.mode === "problem_understanding" || /understand|problem analysis|breakdown/.test(q)) {
+    return `### Nova's Understanding of ${opts.productName}
+
+**1. What is the problem?**
+The core problem is: "${statement}". Users face high cognitive friction, disjointed workflows, or unreliable mechanisms when attempting to achieve this outcome.
+
+**2. Who experiences this problem?**
+Real end-users who need a dependable, distraction-free solution without manual overhead or prone-to-error processes.
+
+**3. Why does the problem matter?**
+Unresolved friction causes drop-offs, user frustration, and wasted effort. Solving it creates immediate, tangible daily value.
+
+**4. Major Pain Points**
+- Lack of immediate visibility into status or progress
+- Friction and complexity during everyday interactions
+- Missing proactive feedback when something needs attention
+
+**5. What should a useful product accomplish?**
+A successful MVP should provide a fast, clear, and reassuring interface that gives the user instant feedback and seamless control.
+
+**6. Key Constraints**
+Keep the initial version lean, performant, and resilient. Avoid unnecessary bloat and prioritize clarity.
+
+**7. How to measure success?**
+Can a first-time user accomplish their primary goal in under 60 seconds with zero confusion?
+
+**8. What to think about before coding?**
+Consider the user's primary mental model, the essential data state needed on the screen, and how simple interactions can be made foolproof.`;
+  }
 
   if (!q || /^(hi|hello|hey|hola|namaste)\b/.test(q)) {
     return `Hi! I'm Nova, your coding mentor for **${opts.productName}** (${level}).\n\nObjective: ${objective}\nTask: **${opts.missionTitle}** · file \`${opts.activeFile}\`.\n\nWhat doubt can I clear? For example:\n- "Explain this task simply"\n- "Why is my preview broken?"\n- "What should I try next?"`;

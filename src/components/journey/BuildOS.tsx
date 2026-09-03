@@ -18,10 +18,12 @@ import {
   Smartphone,
   PanelLeftClose,
   PanelLeftOpen,
+  BookOpen,
 } from "lucide-react";
 import { getJourneyUserId } from "@/lib/journeyUser";
 import { ProblemData } from "@/lib/problemContent";
 import { deriveBuildWorkspace, validateMissionCode, BuildMission } from "@/lib/buildWorkspace";
+import ProblemUnderstandingScreen from "@/components/journey/ProblemUnderstandingScreen";
 
 type FileNode =
   | { type: "file"; name: string; path: string }
@@ -107,7 +109,7 @@ export default function BuildOS({ problemId, productName: propName, problemData,
   const workspace = useMemo(() => deriveBuildWorkspace(problemData), [problemData]);
   const productName = propName || workspace.productName;
 
-  const [phase, setPhase] = useState<"booting" | "ready" | "error">("booting");
+  const [phase, setPhase] = useState<"understanding" | "booting" | "ready" | "error">("understanding");
   const [logs, setLogs] = useState<string[]>(["Preparing BuildOS workspace..."]);
   const [checks, setChecks] = useState<EnvChecks | null>(null);
   const [tree, setTree] = useState<FileNode[]>([]);
@@ -549,8 +551,16 @@ export default function BuildOS({ problemId, productName: propName, problemData,
     setTimeout(() => setCopied(false), 1500);
   };
 
+  const handleStartBuilding = useCallback(async () => {
+    if (tree.length > 0) {
+      setPhase("ready");
+      onReadyChange?.(true);
+      return;
+    }
+    await ensure();
+  }, [tree.length, ensure, onReadyChange]);
+
   useEffect(() => {
-    ensure();
     return () => {
       fetch("/api/buildos/lifecycle", {
         method: "POST",
@@ -558,7 +568,7 @@ export default function BuildOS({ problemId, productName: propName, problemData,
         body: JSON.stringify({ userId, problemId, action: "stop" }),
       }).catch(() => {});
     };
-  }, [ensure, userId, problemId]);
+  }, [userId, problemId]);
 
   useEffect(() => {
     if (!dirty) return;
@@ -591,6 +601,18 @@ export default function BuildOS({ problemId, productName: propName, problemData,
   }, [pushLog]);
 
   const isRunInProgress = runtimeState === "SAVING" || runtimeState === "STARTING";
+
+  if (phase === "understanding") {
+    return (
+      <ProblemUnderstandingScreen
+        problemId={problemId}
+        productName={productName}
+        problemData={problemData}
+        onStartBuilding={handleStartBuilding}
+        canReturnToIDE={tree.length > 0}
+      />
+    );
+  }
 
   return (
     <div className="flex flex-col h-screen w-screen bg-[#07090e] text-zinc-100 font-sans select-none overflow-hidden">
@@ -700,6 +722,16 @@ export default function BuildOS({ problemId, productName: propName, problemData,
               <Play className="h-3.5 w-3.5 fill-current" />
             )}
             <span>{isRunInProgress ? "Running..." : runtimeState === "RUNNING" ? "Run Again" : "Run"}</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setPhase("understanding")}
+            className="flex items-center gap-1.5 px-2.5 py-1 rounded border text-xs font-medium bg-zinc-900 border-zinc-800 text-zinc-400 hover:text-teal-300 hover:border-zinc-700 transition-colors cursor-pointer"
+            title="Review Problem Understanding"
+          >
+            <BookOpen className="h-3.5 w-3.5 text-teal-400" />
+            <span className="hidden md:inline">Understand Problem</span>
           </button>
 
           <button
