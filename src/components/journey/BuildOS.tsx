@@ -604,18 +604,20 @@ export default function BuildOS({ problemId, productName: propName, problemData,
 
   if (phase === "understanding") {
     return (
-      <ProblemUnderstandingScreen
-        problemId={problemId}
-        productName={productName}
-        problemData={problemData}
-        onStartBuilding={handleStartBuilding}
-        canReturnToIDE={tree.length > 0}
-      />
+      <div className="flex flex-col h-full w-full min-h-0 bg-[#07090e] text-zinc-100 font-sans overflow-hidden">
+        <ProblemUnderstandingScreen
+          problemId={problemId}
+          productName={productName}
+          problemData={problemData}
+          onStartBuilding={handleStartBuilding}
+          canReturnToIDE={tree.length > 0}
+        />
+      </div>
     );
   }
 
   return (
-    <div className="flex flex-col h-screen w-screen bg-[#07090e] text-zinc-100 font-sans select-none overflow-hidden">
+    <div className="flex flex-col h-full w-full min-h-0 bg-[#07090e] text-zinc-100 font-sans select-none overflow-hidden">
       {/* ==================== 1. TOP IDE HEADER BAR ==================== */}
       <header className="flex items-center justify-between h-10 px-3 bg-[#0a0d14] border-b border-zinc-800/80 text-xs shrink-0 z-10">
         {/* Left: Branding & Context */}

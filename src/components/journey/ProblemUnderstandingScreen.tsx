@@ -175,7 +175,7 @@ export default function ProblemUnderstandingScreen({
   };
 
   return (
-    <div className="min-h-full flex flex-col bg-[#07090e] text-zinc-100 selection:bg-teal-700 selection:text-white overflow-y-auto">
+    <div className="w-full h-full flex flex-col bg-[#07090e] text-zinc-100 selection:bg-teal-700 selection:text-white overflow-y-auto overflow-x-hidden relative">
       {/* Top Header */}
       <header className="sticky top-0 z-20 bg-[#0a0d14]/90 backdrop-blur-md border-b border-zinc-800/80 px-6 py-4 flex items-center justify-between shrink-0">
         <div className="flex items-center gap-3">
