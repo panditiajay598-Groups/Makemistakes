@@ -151,16 +151,21 @@ export async function POST(req: Request) {
           headers["X-Title"] = process.env.OPENROUTER_APP_NAME || "MakeMistakes BuildOS Nova";
         }
 
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 6500);
+
         const res = await fetch(`${provider.baseUrl}/chat/completions`, {
           method: "POST",
           headers,
+          signal: controller.signal,
           body: JSON.stringify({
             model: provider.model,
             messages: openaiMessages,
             temperature: 0.55,
+            max_tokens: 1800,
             stream: false,
           }),
-        });
+        }).finally(() => clearTimeout(timeoutId));
 
         if (res.ok) {
           const data = await res.json();

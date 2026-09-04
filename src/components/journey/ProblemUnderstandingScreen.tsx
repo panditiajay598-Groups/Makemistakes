@@ -148,13 +148,19 @@ export default function ProblemUnderstandingScreen({
         }),
       });
 
-      const data = await res.json();
+      let data: any = null;
+      try {
+        data = await res.json();
+      } catch {
+        // Response was not JSON
+      }
+
       if (res.ok && data?.message) {
         setMessages((prev) => [...prev, { role: "assistant", content: data.message }]);
       } else {
         setMessages((prev) => [
           ...prev,
-          { role: "assistant", content: "I had trouble processing that question right now. Feel free to ask again or jump into the code!" },
+          { role: "assistant", content: data?.error || "I had trouble processing that question right now. Feel free to ask again or jump into the code!" },
         ]);
       }
     } catch {

@@ -525,19 +525,37 @@ export default function BuildOS({ problemId, productName: propName, problemData,
         }),
       });
 
-      const data = await res.json();
-      if (data.ok && data.message) {
+      let data: any = null;
+      try {
+        data = await res.json();
+      } catch {
+        // Response was not JSON (e.g. Vercel 504 HTML Gateway Timeout)
+      }
+
+      if (res.ok && data?.ok && data.message) {
         setNovaMessages((prev) => [...prev, { role: "assistant", content: data.message }]);
-      } else {
+      } else if (res.status === 504 || res.status === 408 || (!res.ok && !data)) {
         setNovaMessages((prev) => [
           ...prev,
-          { role: "assistant", content: "I'm having trouble analyzing this step right now. Try clicking Run again." },
+          {
+            role: "assistant",
+            content: "Generating complete code for an entire project exceeded the execution timeout limit. Please ask for one specific file or component at a time (e.g. 'Help me build the navbar' or 'Create the database schema') so I can generate clean, working code for you.",
+          },
+        ]);
+      } else {
+        const errorMsg = data?.error || data?.message || "I'm having trouble analyzing this step right now. Try asking for a specific component or smaller step.";
+        setNovaMessages((prev) => [
+          ...prev,
+          { role: "assistant", content: errorMsg },
         ]);
       }
     } catch {
       setNovaMessages((prev) => [
         ...prev,
-        { role: "assistant", content: "Could not connect to Nova mentor. Please try asking again." },
+        {
+          role: "assistant",
+          content: "Nova connection timed out. For large requests like generating entire projects, please ask for individual components or files one by one.",
+        },
       ]);
     } finally {
       setNovaLoading(false);
