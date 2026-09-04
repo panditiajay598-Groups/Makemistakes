@@ -93,6 +93,14 @@ const DEFAULT_PHASES = {
     keyLesson: "",
     futureVision: "",
   },
+  validate: {
+    liveUrl: "",
+    platform: "Vercel",
+    deploymentStatus: "pending",
+    validationChecks: [],
+    validationNotes: "",
+    verifiedAt: null,
+  },
 };
 
 /** GET — Load user's journey data strictly scoped by userId + problemId */

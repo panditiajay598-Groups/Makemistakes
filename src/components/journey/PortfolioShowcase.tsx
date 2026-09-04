@@ -42,6 +42,7 @@ export default function PortfolioShowcase({
   const [planData, setPlanData] = useState<any>(null);
   const [testData, setTestData] = useState<any>(null);
   const [improveData, setImproveData] = useState<any>(null);
+  const [validateData, setValidateData] = useState<any>(null);
 
   useEffect(() => {
     // Reset all portfolio data first (clears previous problem's data)
@@ -50,6 +51,7 @@ export default function PortfolioShowcase({
     setPlanData(null);
     setTestData(null);
     setImproveData(null);
+    setValidateData(null);
 
     // Only load data scoped to this specific problemId
     if (!pid) return;
@@ -59,12 +61,14 @@ export default function PortfolioShowcase({
       const p = localStorage.getItem(`makemistakes_plan_v2_data_${pid}`);
       const t = localStorage.getItem(`makemistakes_test_v2_data_${pid}`);
       const i = localStorage.getItem(`makemistakes_improve_v2_data_${pid}`);
+      const v = localStorage.getItem(`makemistakes_validate_v2_data_${pid}`);
 
       if (r) setResearchData(JSON.parse(r));
       if (d) setDesignData(JSON.parse(d));
       if (p) setPlanData(JSON.parse(p));
       if (t) setTestData(JSON.parse(t));
       if (i) setImproveData(JSON.parse(i));
+      if (v) setValidateData(JSON.parse(v));
     } catch (e) {
       console.warn("Failed to load portfolio artifacts:", e);
     }
@@ -250,21 +254,35 @@ export default function PortfolioShowcase({
         </div>
 
         {/* ------------------------------------------------------------ */}
-        {/* 7. VERSION 1.1 IMPROVEMENTS                                  */}
+        {/* 7. LIVE PRODUCTION VALIDATION (PHASE 8)                      */}
         {/* ------------------------------------------------------------ */}
         <div className="lg:col-span-4 bg-white border border-zinc-200/80 rounded-2xl p-7 shadow-xs space-y-3">
           <div className="flex items-center justify-between border-b border-zinc-100 pb-3">
             <span className="font-serif text-base font-bold text-zinc-900">
-              Improvements Made
+              Production Validation
             </span>
-            <span className="text-[10px] font-mono font-bold bg-teal-100 text-teal-800 px-2 py-0.5 rounded">
-              Version 1.1
+            <span className="text-[10px] font-mono font-bold bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded">
+              Vercel Verified
             </span>
           </div>
           <div className="space-y-1.5 text-xs text-zinc-600 font-sans">
-            <p className="truncate">• Refill Reminders via Pharmacy Integration</p>
-            <p className="truncate">• Family Dashboard & Multi-Caregiver Sync</p>
-            <p className="truncate">• Offline Storage Compression</p>
+            <p><strong className="font-mono text-zinc-800">Platform:</strong> Vercel Global Edge</p>
+            <p><strong className="font-mono text-zinc-800">Status:</strong> {validateData?.deploymentStatus === "verified" ? "Verified Live in Production" : "Validated & Ready to Deploy"}</p>
+            {validateData?.liveUrl ? (
+              <p className="truncate">
+                <strong className="font-mono text-zinc-800">Live URL:</strong>{" "}
+                <a
+                  href={validateData.liveUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-teal-700 hover:text-teal-900 font-mono underline"
+                >
+                  {validateData.liveUrl.replace(/^https?:\/\//, "")}
+                </a>
+              </p>
+            ) : (
+              <p><strong className="font-mono text-zinc-800">Deployment:</strong> 1-Click Vercel Pipeline Active</p>
+            )}
           </div>
         </div>
       </div>

@@ -26,7 +26,7 @@ import PlanPhase from "@/components/journey/PlanPhase";
 import BuildPhase from "@/components/journey/BuildPhase";
 import TestPhase from "@/components/journey/TestPhase";
 import GitHubPushPhase from "@/components/journey/GitHubPushPhase";
-import ImprovePhase from "@/components/journey/ImprovePhase";
+import ValidatePhase from "@/components/journey/ValidatePhase";
 import PortfolioShowcase from "@/components/journey/PortfolioShowcase";
 import ProblemCompletionModal from "@/components/journey/ProblemCompletionModal";
 
@@ -330,7 +330,7 @@ export default function GenericProblemJourneyPage() {
     { number: 5, title: "Build", subtitle: "Build the Product" },
     { number: 6, title: "Test", subtitle: "Validate the Product" },
     { number: 7, title: "Push to GitHub", subtitle: "Publish Code & Portfolio" },
-    { number: 8, title: "Improve", subtitle: "Build Version 1.1" },
+    { number: 8, title: "Validate", subtitle: "Deploy & Validate on Vercel" },
   ];
 
   return (
@@ -547,9 +547,9 @@ export default function GenericProblemJourneyPage() {
                 />
               )}
 
-              {/* SCREEN 8 — IMPROVE */}
+              {/* SCREEN 8 — VALIDATE */}
               {currentStep === 8 && (
-                <ImprovePhase
+                <ValidatePhase
                   key={rawId}
                   userId={userId}
                   problemData={problemData}
