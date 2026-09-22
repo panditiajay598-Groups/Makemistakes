@@ -399,15 +399,15 @@ export default function GenericProblemJourneyPage() {
       {/* MAIN WORKSPACE */}
       <div className="flex-1 flex flex-col min-w-0 h-full overflow-y-auto">
 
-        {/* Top Stepper Navigation (Hidden on Step 1..8 for clean design) */}
-        {currentStep > 8 && (
-          <header className="bg-white border-b border-zinc-200 px-6 sm:px-12 lg:px-16 py-4 flex items-center justify-between sticky top-0 z-20 shrink-0">
+        {/* Top Stepper Navigation across Phases 1 to 8 */}
+        {currentStep !== 5 && (
+          <header className="bg-white border-b border-zinc-200 px-6 sm:px-12 lg:px-16 py-3.5 flex items-center justify-between sticky top-0 z-20 shrink-0">
             <div className="flex items-center gap-2">
               <span className="text-xs font-mono font-bold text-teal-700 bg-teal-50 border border-teal-100 px-2.5 py-1 rounded-full uppercase">
                 Product Journey
               </span>
               <span className="text-zinc-300">•</span>
-              <span className="text-xs font-mono text-zinc-500">
+              <span className="text-xs font-mono text-zinc-500 font-medium">
                 Phase {currentStep} of 8
               </span>
             </div>
@@ -424,8 +424,8 @@ export default function GenericProblemJourneyPage() {
                       isCurrent
                         ? "bg-teal-700 text-white font-bold shadow-xs"
                         : isPast
-                        ? "bg-emerald-50 text-emerald-800 hover:bg-emerald-100"
-                        : "bg-zinc-100 text-zinc-400 hover:text-zinc-700"
+                        ? "bg-emerald-50 text-emerald-800 hover:bg-emerald-100 font-medium"
+                        : "bg-zinc-100 text-zinc-500 hover:text-zinc-800 hover:bg-zinc-200"
                     }`}
                   >
                     <span>{s.number}.</span>
@@ -488,7 +488,7 @@ export default function GenericProblemJourneyPage() {
                   userId={userId}
                   problemData={problemData}
                   onComplete={nextStep}
-                  onBackToJourney={() => router.push("/dashboard/journey")}
+                  onBackToJourney={prevStep}
                 />
               )}
 
@@ -499,7 +499,7 @@ export default function GenericProblemJourneyPage() {
                   userId={userId}
                   problemData={problemData}
                   onComplete={nextStep}
-                  onBackToJourney={() => router.push("/dashboard/journey")}
+                  onBackToJourney={prevStep}
                 />
               )}
 
@@ -510,7 +510,7 @@ export default function GenericProblemJourneyPage() {
                   userId={userId}
                   problemData={problemData}
                   onComplete={nextStep}
-                  onBackToJourney={() => router.push("/dashboard/journey")}
+                  onBackToJourney={prevStep}
                 />
               )}
 
@@ -521,7 +521,7 @@ export default function GenericProblemJourneyPage() {
                   userId={userId}
                   problemData={problemData}
                   onComplete={nextStep}
-                  onBackToJourney={() => router.push("/dashboard/journey")}
+                  onBackToJourney={prevStep}
                 />
               )}
 
@@ -532,7 +532,7 @@ export default function GenericProblemJourneyPage() {
                   userId={userId}
                   problemData={problemData}
                   onComplete={nextStep}
-                  onBackToJourney={() => router.push("/dashboard/journey")}
+                  onBackToJourney={prevStep}
                 />
               )}
 
@@ -543,7 +543,7 @@ export default function GenericProblemJourneyPage() {
                   userId={userId}
                   problemData={problemData}
                   onComplete={nextStep}
-                  onBackToJourney={() => router.push("/dashboard/journey")}
+                  onBackToJourney={prevStep}
                 />
               )}
 
@@ -554,7 +554,7 @@ export default function GenericProblemJourneyPage() {
                   userId={userId}
                   problemData={problemData}
                   onComplete={nextStep}
-                  onBackToJourney={() => router.push("/dashboard/journey")}
+                  onBackToJourney={prevStep}
                 />
               )}
 
