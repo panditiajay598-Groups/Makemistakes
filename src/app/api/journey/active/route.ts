@@ -66,7 +66,19 @@ export async function GET(req: Request) {
 
     if (unfinishedDoc) {
       resultProblemId = unfinishedDoc.problemId;
-      resultStep = typeof unfinishedDoc.currentPhase === "number" ? unfinishedDoc.currentPhase : 1;
+      const isDiscoverDone = Boolean(unfinishedDoc.phases?.discover?.completed);
+      const isResearchDone = isDiscoverDone && Array.isArray(unfinishedDoc.phases?.research?.sources) && unfinishedDoc.phases.research.sources.length > 0;
+      const isDesignDone = isResearchDone && Boolean(unfinishedDoc.phases?.design?.productGoal?.trim());
+      const isPlanDone = isDesignDone && Array.isArray(unfinishedDoc.phases?.plan?.modules) && unfinishedDoc.phases.plan.modules.length > 0;
+
+      let maxAllowedStep = 1;
+      if (isPlanDone) maxAllowedStep = 5;
+      else if (isDesignDone) maxAllowedStep = 4;
+      else if (isResearchDone) maxAllowedStep = 3;
+      else if (isDiscoverDone) maxAllowedStep = 2;
+
+      const rawStep = typeof unfinishedDoc.currentPhase === "number" ? unfinishedDoc.currentPhase : 1;
+      resultStep = Math.min(rawStep, maxAllowedStep);
       isUnfinished = true;
       metaDoc = problemsMap.get(unfinishedDoc.problemId);
     } else {

@@ -13,6 +13,7 @@ import {
   ArrowLeft,
   CheckCircle2,
   LayoutDashboard,
+  Lock,
 } from "lucide-react";
 import { getOnboardingProfile, UserOnboardingProfile } from "@/lib/onboardingStore";
 import { getJourneyUserId } from "@/lib/journeyUser";
@@ -69,6 +70,7 @@ export default function GenericProblemJourneyPage() {
 
   const [profile, setProfile] = useState<UserOnboardingProfile | null>(null);
   const [currentStep, setCurrentStep] = useState<JourneyStep>(1);
+  const [maxUnlockedStep, setMaxUnlockedStep] = useState<JourneyStep>(1);
   const [stepHydrated, setStepHydrated] = useState(false);
   const [activeTab, setActiveTab] = useState("journey");
 
@@ -174,12 +176,26 @@ export default function GenericProblemJourneyPage() {
 
         // 2. Fetch server user journey state to resolve exact currentPhase
         let serverStep: JourneyStep = 1;
+        let unlockedStep: JourneyStep = 1;
         try {
           const uRes = await fetch(`/api/journey/user-data?userId=${encodeURIComponent(userId)}&problemId=${encodeURIComponent(targetId!)}`);
           if (uRes.ok) {
             const uData = await uRes.json();
+            const isDiscoverDone = Boolean(uData?.phases?.discover?.completed);
+            const isResearchDone = isDiscoverDone && Array.isArray(uData?.phases?.research?.sources) && uData.phases.research.sources.length > 0;
+            const isDesignDone = isResearchDone && Boolean(uData?.phases?.design?.productGoal?.trim());
+            const isPlanDone = isDesignDone && Array.isArray(uData?.phases?.plan?.modules) && uData.phases.plan.modules.length > 0;
+
+            if (isPlanDone) unlockedStep = 5;
+            else if (isDesignDone) unlockedStep = 4;
+            else if (isResearchDone) unlockedStep = 3;
+            else if (isDiscoverDone) unlockedStep = 2;
+            else unlockedStep = 1;
+
             if (typeof uData.currentPhase === "number" && uData.currentPhase >= 1 && uData.currentPhase <= 9) {
-              serverStep = uData.currentPhase as JourneyStep;
+              serverStep = Math.min(uData.currentPhase, unlockedStep) as JourneyStep;
+            } else {
+              serverStep = unlockedStep;
             }
           }
         } catch (uErr) {
@@ -187,7 +203,10 @@ export default function GenericProblemJourneyPage() {
         }
 
         if (isSubscribed) {
-          const finalStep = hasExplicitUrlStep ? urlStepVal : (serverStep || loadJourneyStep(userId, targetId!));
+          setMaxUnlockedStep(unlockedStep);
+          const rawCandidate = hasExplicitUrlStep ? urlStepVal : (serverStep || loadJourneyStep(userId, targetId!));
+          // Strict workflow: NEVER allow jumping ahead of unlocked steps without completing prior phases!
+          const finalStep = Math.min(rawCandidate, unlockedStep) as JourneyStep;
           setCurrentStep(finalStep);
           saveJourneyStep(userId, targetId!, finalStep);
           setStepHydrated(true);
@@ -268,10 +287,12 @@ export default function GenericProblemJourneyPage() {
 
   const nextStep = () => {
     if (currentStep === 8) {
-      // Phase 8 (Improve) Complete — Handle Problem Completion
+      // Phase 8 (Validate) Complete — Handle Problem Completion
       handleCompleteJourney();
     } else if (currentStep < 9) {
-      setCurrentStep((prev) => (prev + 1) as JourneyStep);
+      const next = (currentStep + 1) as JourneyStep;
+      setMaxUnlockedStep((prev) => Math.max(prev, next) as JourneyStep);
+      setCurrentStep(next);
       window.scrollTo({ top: 0, behavior: "smooth" });
     }
   };
@@ -416,21 +437,33 @@ export default function GenericProblemJourneyPage() {
               {stepMeta.map((s) => {
                 const isCurrent = currentStep === s.number;
                 const isPast = currentStep > s.number;
+                const isUnlocked = s.number <= maxUnlockedStep;
                 return (
                   <button
                     key={s.number}
-                    onClick={() => setCurrentStep(s.number as JourneyStep)}
-                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-mono transition-all cursor-pointer ${
+                    onClick={() => {
+                      if (!isUnlocked) return;
+                      setCurrentStep(s.number as JourneyStep);
+                    }}
+                    disabled={!isUnlocked}
+                    title={!isUnlocked ? "Complete previous phases to unlock" : undefined}
+                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-mono transition-all ${
                       isCurrent
-                        ? "bg-teal-700 text-white font-bold shadow-xs"
+                        ? "bg-teal-700 text-white font-bold shadow-xs cursor-default"
                         : isPast
-                        ? "bg-emerald-50 text-emerald-800 hover:bg-emerald-100 font-medium"
-                        : "bg-zinc-100 text-zinc-500 hover:text-zinc-800 hover:bg-zinc-200"
+                        ? "bg-emerald-50 text-emerald-800 hover:bg-emerald-100 font-medium cursor-pointer"
+                        : isUnlocked
+                        ? "bg-zinc-100 text-zinc-600 hover:text-zinc-900 hover:bg-zinc-200 cursor-pointer"
+                        : "bg-zinc-100/60 text-zinc-300 cursor-not-allowed border border-transparent"
                     }`}
                   >
                     <span>{s.number}.</span>
                     <span>{s.title}</span>
-                    {isPast && <CheckCircle2 className="h-3 w-3 text-emerald-600 ml-0.5" />}
+                    {isPast ? (
+                      <CheckCircle2 className="h-3 w-3 text-emerald-600 ml-0.5" />
+                    ) : !isUnlocked ? (
+                      <Lock className="h-2.5 w-2.5 text-zinc-300 ml-0.5" />
+                    ) : null}
                   </button>
                 );
               })}

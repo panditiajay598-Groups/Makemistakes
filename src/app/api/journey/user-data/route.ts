@@ -136,11 +136,26 @@ export async function GET(req: Request) {
       ...(journey.phases || {}),
     };
 
+    const isDiscoverDone = Boolean(mergedPhases?.discover?.completed);
+    const isResearchDone = isDiscoverDone && Array.isArray(mergedPhases?.research?.sources) && mergedPhases.research.sources.length > 0;
+    const isDesignDone = isResearchDone && Boolean(mergedPhases?.design?.productGoal?.trim());
+    const isPlanDone = isDesignDone && Array.isArray(mergedPhases?.plan?.modules) && mergedPhases.plan.modules.length > 0;
+
+    let maxAllowedPhase = 1;
+    if (isPlanDone) maxAllowedPhase = 5;
+    else if (isDesignDone) maxAllowedPhase = 4;
+    else if (isResearchDone) maxAllowedPhase = 3;
+    else if (isDiscoverDone) maxAllowedPhase = 2;
+
+    const rawPhase = typeof journey.currentPhase === "number" ? journey.currentPhase : 1;
+    const safeCurrentPhase = Math.min(rawPhase, maxAllowedPhase);
+
     return NextResponse.json({
       exists: true,
       userId: journey.userId,
       problemId: journey.problemId,
-      currentPhase: typeof journey.currentPhase === "number" ? journey.currentPhase : 1,
+      currentPhase: safeCurrentPhase,
+      maxAllowedPhase,
       status: journey.status || "in_progress",
       phases: mergedPhases,
       lastSavedAt: journey.lastSavedAt || journey.updatedAt,
@@ -190,7 +205,23 @@ export async function POST(req: Request) {
     }
 
     if (currentPhase && currentPhase >= 1 && currentPhase <= 9) {
-      setFields.currentPhase = currentPhase;
+      const existingDoc = await res.collection.findOne({ userId, problemId });
+      const currentPhases = {
+        ...(existingDoc?.phases || {}),
+        ...(phase && data !== undefined ? { [phase]: data } : {}),
+      };
+      const isDiscoverDone = Boolean(currentPhases?.discover?.completed);
+      const isResearchDone = isDiscoverDone && Array.isArray(currentPhases?.research?.sources) && currentPhases.research.sources.length > 0;
+      const isDesignDone = isResearchDone && Boolean(currentPhases?.design?.productGoal?.trim());
+      const isPlanDone = isDesignDone && Array.isArray(currentPhases?.plan?.modules) && currentPhases.plan.modules.length > 0;
+
+      let maxPhase = 1;
+      if (isPlanDone) maxPhase = 5;
+      else if (isDesignDone) maxPhase = 4;
+      else if (isResearchDone) maxPhase = 3;
+      else if (isDiscoverDone) maxPhase = 2;
+
+      setFields.currentPhase = Math.min(currentPhase, maxPhase);
     }
 
     if (customStatus) {
