@@ -54,14 +54,23 @@ export default function BuildPhase({
             All Phases
           </Link>
         </div>
-        <div className="flex items-center gap-2">
-          <span className="text-[11px] text-teal-400 font-mono font-medium">
-            Phase 5 of 8 — Build
-          </span>
-          <span className="text-zinc-700 hidden sm:inline">·</span>
-          <p className="text-[11px] text-zinc-500 font-mono hidden sm:inline">
-            packages stay in your cloud workspace, not on your device
-          </p>
+        <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2">
+            <span className="text-[11px] text-teal-400 font-mono font-medium">
+              Phase 5 of 8 — Build
+            </span>
+            <span className="text-zinc-700 hidden sm:inline">·</span>
+            <p className="text-[11px] text-zinc-500 font-mono hidden sm:inline">
+              packages stay in your cloud workspace, not on your device
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onComplete}
+            className="inline-flex items-center gap-1.5 px-3 py-1 rounded-lg bg-teal-700 hover:bg-teal-600 text-white font-mono text-[11px] font-semibold transition-all cursor-pointer shadow-xs"
+          >
+            <span>Continue to Test →</span>
+          </button>
         </div>
       </div>
 
@@ -71,6 +80,7 @@ export default function BuildPhase({
           productName={workspace.productName}
           problemData={problemData}
           onComplete={onComplete}
+          userId={userId}
         />
       </div>
     </div>

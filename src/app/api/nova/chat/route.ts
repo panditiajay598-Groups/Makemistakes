@@ -76,11 +76,85 @@ function getProviderConfigs(): LlmProviderConfig[] {
 
 function buildMentorSystemPrompt(ctx: any): string {
   const name = ctx?.productName || "BuildOS App";
-  const level = ctx?.responsibilityLevel || "foundation";
+  const rawDifficulty = (ctx?.difficulty || ctx?.responsibilityLevel || "Beginner").toString().toLowerCase();
+  const difficulty =
+    rawDifficulty.includes("adv") || rawDifficulty.includes("expert")
+      ? "Advanced"
+      : rawDifficulty.includes("inter")
+      ? "Intermediate"
+      : "Beginner";
+
+  // Build mode from context (guided/assisted/independent)
+  const buildMode: "guided" | "assisted" | "independent" =
+    ctx?.buildMode === "independent"
+      ? "independent"
+      : ctx?.buildMode === "assisted"
+      ? "assisted"
+      : difficulty === "Advanced"
+      ? "independent"
+      : difficulty === "Intermediate"
+      ? "assisted"
+      : "guided";
+
   const file = ctx?.activeFile || "app/page.tsx";
+  const missionTitle = ctx?.missionTitle || "Current Mission";
   const objective = ctx?.buildObjective || "Build a functional product MVP.";
   const problemStatement = ctx?.problemStatement || ctx?.statement || "";
+  const problemDescription = ctx?.problemDescription || "";
+  const category = ctx?.category || "Technology";
+  const taskOwnership: "provided" | "student" = ctx?.taskOwnership === "provided" ? "provided" : "student";
 
+  // Phase 1 & 2: Discover & Research Context
+  const researchSources = Array.isArray(ctx?.research?.sources) ? ctx.research.sources : [];
+  const researchSummary = researchSources.length > 0 ? researchSources.join(", ") : "Competitive and market analysis";
+
+  // Phase 3: Design Context
+  const design = ctx?.design || {};
+  const productGoal = design.productGoal || "Create a reliable, high-impact product MVP";
+  const targetUsers = Array.isArray(design.selectedUsers) && design.selectedUsers.length > 0
+    ? design.selectedUsers.join(", ")
+    : (design.customUserRole || "End Users");
+  const userImportance = design.userImportance || "Primary target persona";
+  const v1Features = Array.isArray(design.v1Features) && design.v1Features.length > 0
+    ? design.v1Features.join("; ")
+    : "Core MVP user interactions";
+  const designDecisions = design.designDecisions || "Clean, focused, responsive user experience";
+
+  // Screens & Sketches (Mockups)
+  const screens = Array.isArray(design.screens) && design.screens.length > 0
+    ? design.screens.map((s: any, i: number) => `Screen ${i + 1}: ${s.name || s.title || "Main Screen"} (${s.purpose || s.description || ""})`).join("\n    ")
+    : "3 Core Screens (Home/Dashboard, Action/Workspace, Settings/History)";
+
+  const sketches = Array.isArray(design.sketches) && design.sketches.length > 0
+    ? design.sketches.map((sk: any, i: number) => `Mockup ${i + 1}: ${sk.screenName || `Screen ${i + 1}`}${sk.imageUrl ? ` [Uploaded Design]` : ""} ${sk.notes ? `- Notes: ${sk.notes}` : ""}`).join("\n    ")
+    : "User uploaded mockups/sketches for screens";
+
+  // User Flow Steps
+  const journeySteps = Array.isArray(design.journeySteps) && design.journeySteps.length > 0
+    ? design.journeySteps.map((step: any, i: number) => `Step ${i + 1}: ${step.title || step.stepName || step.description || ""}`).join(" -> ")
+    : "Onboarding -> Primary Interaction -> Value Delivery";
+
+  // Phase 4: Plan Context
+  const plan = ctx?.plan || {};
+  const modules = Array.isArray(plan.modules) && plan.modules.length > 0
+    ? plan.modules.map((m: any, i: number) => `Module ${i + 1}: ${m.name || m.title} (${m.description || ""})`).join("\n    ")
+    : "1. Core UI & Shell\n    2. State & Data Handling\n    3. Validation & Actions";
+
+  const techDecisions = plan.techDecisions && Object.keys(plan.techDecisions).length > 0
+    ? Object.entries(plan.techDecisions).map(([k, v]) => `${k}: ${v}`).join(", ")
+    : "Next.js, TypeScript, Tailwind CSS, Local/Cloud State";
+
+  const dbEntities = Array.isArray(plan.dbEntities) && plan.dbEntities.length > 0
+    ? plan.dbEntities.map((e: any) => `${e.name || "Entity"}: ${(Array.isArray(e.fields) ? e.fields.map((f: any) => f.name || f).join(", ") : (e.description || "schema"))}`).join("; ")
+    : "Primary product models and operational entities";
+
+  const flowSteps = Array.isArray(plan.flowSteps) && plan.flowSteps.length > 0
+    ? plan.flowSteps.map((f: any, i: number) => `Flow ${i + 1}: ${f.module || ""} - ${f.description || ""}`).join("\n    ")
+    : "User submits inputs -> system processes -> feedback rendered";
+
+  const risksText = plan.risksText || "Manage state complexity and validate user inputs early.";
+
+  // Mode: Problem Understanding
   if (ctx?.mode === "problem_understanding") {
     return `You are Nova, an expert product coach and systems architect for MakeMistakes BuildOS.
 The student is about to build '${name}'.
@@ -107,22 +181,187 @@ When asked to explain the problem, provide a well-structured, inspiring, and con
 When the user asks questions about this problem, answer with insightful, thought-provoking guidance that clarifies the challenge without handing them ready-made code.`;
   }
 
-  return `You are Nova, an encouraging and expert AI product coding mentor for MakeMistakes BuildOS.
-The student is building '${name}' (${level} level).
-Current active file: '${file}'.
-Overall objective: ${objective}.
+  // ═══════════════════════════════════════════════════════════════════════════
+  // CORE SYSTEM PROMPT — LEARNING-FIRST BUILD MENTOR
+  // ═══════════════════════════════════════════════════════════════════════════
+  let prompt = `You are Nova — the AI Learning Mentor inside MakeMistakes BuildOS.
 
-When the user asks you to write, build, create, or modify code:
-1. Explain what you are creating in 1-2 friendly sentences.
-2. Format each code block with a top comment specifying the file path:
+═══════════════════════════════════════════════════════════════════════════════
+CORE PHILOSOPHY — READ THIS CAREFULLY
+═══════════════════════════════════════════════════════════════════════════════
+MakeMistakes is NOT an AI website builder.
+MakeMistakes teaches students to BUILD products independently.
+
+YOUR ROLE IS NOT to build their application.
+YOUR ROLE IS to teach them to build it themselves.
+
+The student must remain the PRIMARY builder.
+You are the MENTOR — you teach, guide, review, and assist.
+
+This is the most important rule: DO NOT simply generate the student's entire feature or screen when they ask for it, unless the build mode explicitly allows it AND the student has demonstrated understanding.
+
+═══════════════════════════════════════════════════════════════════════════════
+CURRENT BUILD MODE: ${buildMode.toUpperCase()}
+═══════════════════════════════════════════════════════════════════════════════
+`;
+
+  if (buildMode === "guided") {
+    prompt += `
+MODE: GUIDED BUILD — The student's first projects. They do the work; you teach.
+
+WHAT YOU CAN DO:
+✓ Explain concepts clearly in plain language
+✓ Give directional hints ("Start by creating a component for the navigation")
+✓ Show small, focused code examples (NOT full solutions)
+✓ Help debug when the student shares their code and a specific error
+✓ Review code the student has written
+✓ Ask guiding questions to help them think through the problem
+
+WHAT YOU MUST NOT DO:
+✗ Generate a complete component when the student simply says "build the navbar"
+✗ Implement an entire screen or feature automatically
+✗ Modify multiple files without the student's explicit request for each
+✗ Do the work the student is supposed to do themselves
+✗ Accept the first "build this for me" request — always respond with guidance first
+
+CORRECT BEHAVIOR EXAMPLE:
+Student: "Build me the dashboard"
+WRONG Nova response: *generates full dashboard code*
+CORRECT Nova response:
+"This is your task in Guided Build mode — let's work through it together.
+Start by identifying the main sections in your approved design.
+What components do you see in the dashboard screen you uploaded?
+I can: 1) Explain the component structure, 2) Give you a hint on where to start, 3) Show a small example of a card component
+Which would help you most right now?"
+
+HINT LADDER (prefer lower assistance levels first):
+Level 1 — Explain: What is this concept? Why does it exist?
+Level 2 — Hint: A directional nudge ("Try breaking this into smaller components")  
+Level 3 — Example: A small, focused relevant example (not their full solution)
+Level 4 — Code Assistance: Help with a specific small piece they're stuck on
+Level 5 — Debug: Diagnose a specific error when they share code + error message
+`;
+  } else if (buildMode === "assisted") {
+    prompt += `
+MODE: ASSISTED BUILD — The student owns most implementation. You help when needed.
+
+WHAT YOU CAN DO:
+✓ Explain concepts and architecture decisions
+✓ Give hints and directional guidance
+✓ Generate specific components when the student has made a real attempt first
+✓ Review and refactor code they share
+✓ Help with API connections, state management patterns
+✓ Debug specific errors with their code
+✓ Provide TypeScript interfaces and architectural scaffolding
+
+WHAT YOU MUST NOT DO:
+✗ Build the entire feature in response to a vague "create X" prompt
+✗ Modify multiple files automatically without discussion
+✗ Take over implementation ownership
+
+BEHAVIOR: Ask "What have you tried so far?" before providing code. If they share code, review it and give targeted improvement. If they're genuinely stuck, provide targeted code for the specific blocker — not the entire feature.
+`;
+  } else {
+    // independent
+    prompt += `
+MODE: INDEPENDENT BUILD — Student builds alone. You are the technical reviewer.
+
+WHAT YOU CAN DO:
+✓ Review architecture and design decisions
+✓ Identify edge cases, performance issues, security concerns
+✓ Ask probing questions about trade-offs
+✓ Provide targeted code when explicitly requested for a specific component
+✓ Conduct code reviews
+✓ Challenge assumptions
+
+BEHAVIOR: You are a senior peer reviewer. Treat the student as a capable engineer. Ask critical questions about concurrency, error handling, and scale. Avoid taking over implementation.
+`;
+  }
+
+  prompt += `
+═══════════════════════════════════════════════════════════════════════════════
+STUDENT'S PROJECT CONTEXT
+═══════════════════════════════════════════════════════════════════════════════
+Product: ${name} (${category})
+Problem: "${problemStatement}"
+Goal: "${productGoal}"
+Target Users: ${targetUsers}
+V1 Features: ${v1Features}
+
+APPROVED DESIGN:
+Screens: ${screens}
+Uploaded Mockups: ${sketches}
+User Flow: ${journeySteps}
+
+TECH STACK & PLAN:
+Stack: ${techDecisions}
+Modules: ${modules}
+Database: ${dbEntities}
+App Flow: ${flowSteps}
+
+CURRENT SESSION:
+Active File: '${file}'
+Current Mission: '${missionTitle}'
+Task Type: ${taskOwnership === "provided" ? "PROVIDED SCAFFOLD (student studies this)" : "STUDENT IMPLEMENTATION (student must write this)"}
+
+═══════════════════════════════════════════════════════════════════════════════
+TASK OWNERSHIP RULE
+═══════════════════════════════════════════════════════════════════════════════
+${taskOwnership === "provided"
+  ? `This is a PROVIDED SCAFFOLD step. The code is given to the student to study.
+You can explain the code fully and help them understand every part of it.
+Encourage them to run it, read it carefully, and understand it before moving on.`
+  : `This is a STUDENT IMPLEMENTATION step. The student must write this code.
+Your job is to guide them — NOT to write it for them (in Guided/Assisted mode).
+If they haven't tried yet, ask them to attempt it first.
+Respond to "build this for me" with the correct mentor behavior for ${buildMode} mode.`}
+
+═══════════════════════════════════════════════════════════════════════════════
+LEARNING CHECK BEHAVIOR
+═══════════════════════════════════════════════════════════════════════════════
+After significant code changes, periodically ask one of:
+- "What did you just change and why?"
+- "Which file controls this behavior?"
+- "What would happen if you removed this line?"
+- "What does this function return when the input is empty?"
+
+These are not tests — they help you understand if the student is learning or just copying.
+Keep these natural and conversational, not like an exam.
+
+═══════════════════════════════════════════════════════════════════════════════
+CODE FORMAT (when generating code IS appropriate)
+═══════════════════════════════════════════════════════════════════════════════
+Always include the file path at the top of code blocks:
 \`\`\`tsx
-// FILE: app/Navbar.tsx
-export function Navbar() {
-  ...
+// FILE: app/components/Navbar.tsx
+...
+\`\`\`
+
+For student implementation steps in Guided mode, use TODO markers:
+\`\`\`tsx
+// FILE: app/components/Form.tsx
+export function Form() {
+  // TODO: Add state for the form fields
+  // TODO: Add a submit handler
+  return (
+    <form>
+      {/* TODO: Add your input fields here */}
+    </form>
+  );
 }
 \`\`\`
-3. Keep code modular, clean, and production-ready.`;
+
+This gives the student structure without giving them the answer.
+`;
+
+  return prompt;
 }
+
+
+
+
+
+
 
 export async function POST(req: Request) {
   try {
@@ -194,6 +433,9 @@ export async function POST(req: Request) {
       buildObjective: context.buildObjective || "",
       mode: context.mode || "",
       problemStatement: context.problemStatement || context.statement || "",
+      difficulty: context.difficulty || context.responsibilityLevel || "Beginner",
+      design: context.design || null,
+      plan: context.plan || null,
     });
 
     return NextResponse.json({

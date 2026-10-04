@@ -21,6 +21,8 @@ import {
   MoveRight,
   PenTool,
   Grid,
+  Copy,
+  Check,
 } from "lucide-react";
 
 import { ProblemData } from "@/lib/problemContent";
@@ -73,7 +75,7 @@ interface SketchItem {
   id: string;
   screenLabel: string;
   imageUrl: string | null;
-  drawLater: boolean;
+  drawLater?: boolean;
 }
 
 // Empty defaults — no problem-specific content
@@ -89,9 +91,9 @@ const EMPTY_JOURNEY: JourneyStepItem[] = [
 ];
 
 const EMPTY_SKETCHES: SketchItem[] = [
-  { id: "sk1", screenLabel: "Screen 1", imageUrl: null, drawLater: false },
-  { id: "sk2", screenLabel: "Screen 2", imageUrl: null, drawLater: false },
-  { id: "sk3", screenLabel: "Screen 3", imageUrl: null, drawLater: false },
+  { id: "sk1", screenLabel: "Screen 1", imageUrl: null },
+  { id: "sk2", screenLabel: "Screen 2", imageUrl: null },
+  { id: "sk3", screenLabel: "Screen 3", imageUrl: null },
 ];
 
 export default function DesignPhase({
@@ -134,6 +136,49 @@ export default function DesignPhase({
 
   // Save Progress State
   const [isSaved, setIsSaved] = useState(false);
+
+  // Beginner AI prompt suggestion state
+  const [copiedPromptType, setCopiedPromptType] = useState<string | null>(null);
+
+  const diffLabel = (problemData?.difficulty || problemData?.learning?.level || "").trim().toLowerCase();
+  const isBeginner = !diffLabel || diffLabel === "beginner";
+
+  const handleCopyPrompt = (text: string, type: string) => {
+    if (typeof navigator !== "undefined" && navigator.clipboard) {
+      navigator.clipboard.writeText(text);
+      setCopiedPromptType(type);
+      setTimeout(() => setCopiedPromptType(null), 2500);
+    }
+  };
+
+  const suggestedFullPrompt = React.useMemo(() => {
+    const title = problemData?.title || problemData?.problemStatement || "Modern Digital Platform";
+    const category = problemData?.category || "B2B / Consumer Tech";
+    const f1 = v1Features[0] || "User Dashboard & Analytics";
+    const f2 = v1Features[1] || "Automated Escrow & Milestone Payments";
+    const f3 = v1Features[2] || "Real-Time Tracking & Verification";
+    const s1Name = screens[0]?.name?.replace(/^Screen\s*\d+:\s*/i, "").trim() || "Overview & Landing Screen";
+    const s2Name = screens[1]?.name?.replace(/^Screen\s*\d+:\s*/i, "").trim() || "Core Milestone & Transaction Screen";
+    const s3Name = screens[2]?.name?.replace(/^Screen\s*\d+:\s*/i, "").trim() || "Verification & Progress Status Screen";
+
+    return `High-fidelity mobile UI design, 3-screen app flow for a ${category} application solving: "${title}". Modern, clean, minimalist aesthetic with crisp iOS/Android UI components, rounded cards, subtle emerald/teal accents, soft shadows, and intuitive typography. Screen 1 (${s1Name}): welcomes user, presents problem overview, summary metric cards, and a primary CTA. Screen 2 (${s2Name}): main functional workflow featuring ${f1}, ${f2}, and interactive inputs. Screen 3 (${s3Name}): confirmation and tracking screen displaying ${f3}, verified status badge, timeline progress, and completion action. Dribbble / Behance trending UI mockup style, 8k resolution, photorealistic mobile screen presentation.`;
+  }, [problemData, screens, v1Features]);
+
+  const getScreenPrompt = (index: number, screenLabel: string) => {
+    const title = problemData?.title || problemData?.problemStatement || "Digital Solution";
+    const category = problemData?.category || "Mobile Application";
+    const screenItem = screens[index];
+    const screenTitle = screenItem?.name?.replace(/^Screen\s*\d+:\s*/i, "").trim() || screenLabel;
+    const screenDesc = screenItem?.description?.trim() || "";
+
+    if (index === 0) {
+      return `Modern mobile UI screen mockup for ${screenTitle} in a ${category} application addressing: "${title}". ${screenDesc ? `Screen details: ${screenDesc}. ` : ""}Features clean card components, welcoming header, key summary metrics, intuitive navigation, minimalist aesthetic, subtle teal accents, Figma design system style.`;
+    } else if (index === 1) {
+      return `Modern mobile UI screen mockup for ${screenTitle} in a ${category} application addressing: "${title}". ${screenDesc ? `Screen details: ${screenDesc}. ` : ""}Features interactive workflow controls, form inputs, milestone cards, status indicators, clean layout, iOS design guidelines, polished UX.`;
+    } else {
+      return `Modern mobile UI screen mockup for ${screenTitle} in a ${category} application addressing: "${title}". ${screenDesc ? `Screen details: ${screenDesc}. ` : ""}Features verified status banner, real-time activity timeline, transaction details, primary action buttons, sleek modern UI.`;
+    }
+  };
 
   // Load from Server API + localStorage fallback
   useEffect(() => {
@@ -328,15 +373,15 @@ export default function DesignPhase({
     reader.onload = (e) => {
       const url = e.target?.result as string;
       setSketches(
-        sketches.map((sk) => (sk.id === id ? { ...sk, imageUrl: url } : sk))
+        sketches.map((sk) => (sk.id === id ? { ...sk, imageUrl: url, drawLater: false } : sk))
       );
     };
     reader.readAsDataURL(file);
   };
 
-  const toggleDrawLater = (id: string) => {
+  const handleRemoveImage = (id: string) => {
     setSketches(
-      sketches.map((sk) => (sk.id === id ? { ...sk, drawLater: !sk.drawLater } : sk))
+      sketches.map((sk) => (sk.id === id ? { ...sk, imageUrl: null, drawLater: false } : sk))
     );
   };
 
@@ -356,6 +401,9 @@ export default function DesignPhase({
   const isScreensValid =
     screens.length >= 3 && screens.every((s) => s.name.trim() && s.description.trim());
   const isJourneyValid = journeySteps.length >= 2;
+  const isSketchesValid =
+    sketches.length >= 3 &&
+    sketches.every((sk) => Boolean(sk.imageUrl && sk.imageUrl.trim()));
   const isDecisionsValid = designDecisions.trim().length > 0;
 
   const isAllValid =
@@ -365,6 +413,7 @@ export default function DesignPhase({
     isFeaturesValid &&
     isScreensValid &&
     isJourneyValid &&
+    isSketchesValid &&
     isDecisionsValid;
 
   return (
@@ -909,84 +958,209 @@ export default function DesignPhase({
         {/* SECTION 6 — LOW FIDELITY SKETCHES                           */}
         {/* ============================================================ */}
         <section className="bg-white border border-zinc-200/80 rounded-2xl p-7 shadow-xs space-y-6">
-          <div>
-            <span className="text-[11px] font-mono font-bold text-teal-800 bg-teal-50 border border-teal-100 px-2.5 py-0.5 rounded uppercase">
-              SECTION 6
-            </span>
-            <h2 className="font-serif text-2xl font-bold text-zinc-900 tracking-tight mt-1">
-              Low-Fidelity Sketches
-            </h2>
-            <p className="text-xs text-zinc-500 font-sans mt-1">
-              Sketch your key screens. Upload sketches created in any design tool or check &quot;Draw Later&quot;.
-            </p>
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="text-[11px] font-mono font-bold text-teal-800 bg-teal-50 border border-teal-100 px-2.5 py-0.5 rounded uppercase">
+                  SECTION 6
+                </span>
+                <span className="text-[10px] font-mono font-bold text-rose-700 bg-rose-50 border border-rose-200 px-2 py-0.5 rounded uppercase">
+                  MANDATORY
+                </span>
+              </div>
+              <h2 className="font-serif text-2xl font-bold text-zinc-900 tracking-tight mt-1.5">
+                Low-Fidelity Sketches & UI Screens
+              </h2>
+              <p className="text-xs text-zinc-500 font-sans mt-1">
+                Design and upload 3 key screens for your product before planning development.
+              </p>
+            </div>
+            <div className="shrink-0 font-mono text-xs">
+              <span className={`px-3 py-1.5 rounded-full border font-semibold ${
+                isSketchesValid
+                  ? "bg-emerald-50 text-emerald-800 border-emerald-200"
+                  : "bg-amber-50 text-amber-800 border-amber-200"
+              }`}>
+                {sketches.filter((s) => Boolean(s.imageUrl)).length} / 3 Uploaded
+              </span>
+            </div>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-            {sketches.map((sk) => (
-              <div
-                key={sk.id}
-                className="bg-zinc-50/60 border border-zinc-200/80 rounded-2xl p-5 space-y-4 flex flex-col justify-between items-center text-center"
-              >
-                <span className="text-xs font-mono font-bold text-zinc-800">
-                  {sk.screenLabel}
-                </span>
+          {/* AI & Design Knowledge Guidance Tip Box */}
+          <div className="p-4 bg-teal-50/60 border border-teal-200/80 rounded-2xl text-xs text-teal-950 flex items-start gap-3">
+            <Sparkles className="h-5 w-5 text-teal-700 shrink-0 mt-0.5" />
+            <div className="space-y-1">
+              <p className="font-semibold text-teal-900">
+                How to generate or create your screens:
+              </p>
+              <p className="text-teal-800/90 text-xs leading-relaxed">
+                You can use modern AI tools (such as <strong>v0.dev</strong>, <strong>Midjourney</strong>, <strong>ChatGPT / DALL-E</strong>, or <strong>Figma AI</strong>) to generate your screen UI. Alternatively, if you have design knowledge, you can create them in <strong>Figma</strong>, <strong>Canva</strong>, or draw sketches on paper and upload photos.
+              </p>
+              <p className="text-[11px] font-mono font-bold text-teal-900 pt-0.5">
+                * Note: Uploading all 3 screens is mandatory to complete the Design Phase and unlock Planning.
+              </p>
+            </div>
+          </div>
 
-                {/* Phone Frame Container */}
-                <div className="w-full aspect-[9/16] max-w-[190px] mx-auto bg-white border-2 border-zinc-300 rounded-3xl p-3 shadow-inner flex flex-col items-center justify-center relative overflow-hidden">
-                  {sk.imageUrl ? (
-                    <img
-                      src={sk.imageUrl}
-                      alt={sk.screenLabel}
-                      className="w-full h-full object-cover rounded-2xl"
-                    />
-                  ) : sk.drawLater ? (
-                    <div className="space-y-2 text-center p-2">
-                      <PenTool className="h-6 w-6 text-amber-600 mx-auto" />
-                      <span className="text-[10px] font-mono font-bold text-amber-800 block">
-                        Will Draw Later
+          {/* Beginner AI Prompt Suggestion Box */}
+          {isBeginner && (
+            <div className="bg-gradient-to-br from-amber-50/70 via-teal-50/40 to-emerald-50/40 border border-teal-200/90 rounded-2xl p-5 space-y-3.5 shadow-xs">
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 border-b border-teal-200/60 pb-3">
+                <div className="flex items-center gap-2.5">
+                  <div className="h-8 w-8 rounded-xl bg-teal-800 text-white flex items-center justify-center shrink-0 shadow-xs">
+                    <Sparkles className="h-4 w-4 text-amber-300" />
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <span className="font-bold text-sm text-teal-950 font-serif">
+                        Suggested AI Design Prompt for Beginners
+                      </span>
+                      <span className="text-[9px] font-mono font-bold text-teal-800 bg-teal-100/90 border border-teal-200 px-2 py-0.5 rounded-full uppercase">
+                        Beginner Assistance
                       </span>
                     </div>
+                    <p className="text-[11px] text-zinc-600 font-sans mt-0.5">
+                      Since these screens will be the exact reference to build your product, use this prompt with any AI tool to generate your 3 screens:
+                    </p>
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => handleCopyPrompt(suggestedFullPrompt, "full")}
+                  className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-teal-800 hover:bg-teal-700 text-white text-xs font-mono font-semibold transition-all shadow-xs shrink-0 cursor-pointer"
+                >
+                  {copiedPromptType === "full" ? (
+                    <>
+                      <Check className="h-3.5 w-3.5 text-emerald-300" />
+                      <span>Copied Prompt!</span>
+                    </>
                   ) : (
-                    <div className="space-y-3 text-center p-2">
-                      <Smartphone className="h-8 w-8 text-zinc-300 mx-auto" />
-                      <p className="text-[10px] text-zinc-400 font-sans">
-                        No sketch uploaded
-                      </p>
-                    </div>
+                    <>
+                      <Copy className="h-3.5 w-3.5" />
+                      <span>Copy Full Prompt</span>
+                    </>
                   )}
-                </div>
-
-                {/* Action Controls */}
-                <div className="space-y-2 w-full">
-                  <label className="inline-flex items-center justify-center gap-1.5 w-full py-2 px-3 rounded-xl border border-zinc-300 bg-white hover:bg-zinc-50 text-xs font-sans font-medium text-zinc-700 cursor-pointer shadow-2xs">
-                    <Upload className="h-3.5 w-3.5 text-teal-700" />
-                    <span>Upload Image</span>
-                    <input
-                      type="file"
-                      accept="image/*"
-                      className="hidden"
-                      onChange={(e) => {
-                        if (e.target.files && e.target.files[0]) {
-                          handleImageUpload(sk.id, e.target.files[0]);
-                        }
-                      }}
-                    />
-                  </label>
-
-                  <button
-                    type="button"
-                    onClick={() => toggleDrawLater(sk.id)}
-                    className={`w-full py-1.5 px-3 rounded-lg text-[10px] font-mono transition-all cursor-pointer ${
-                      sk.drawLater
-                        ? "bg-amber-100 border border-amber-300 text-amber-900 font-bold"
-                        : "bg-transparent text-zinc-500 hover:text-zinc-800"
-                    }`}
-                  >
-                    {sk.drawLater ? "✓ Draw Later Selected" : "Or Check Draw Later"}
-                  </button>
-                </div>
+                </button>
               </div>
-            ))}
+
+              {/* Prompt Text Box */}
+              <div className="relative bg-white/95 border border-teal-200/80 rounded-xl p-3.5 text-xs text-zinc-700 font-mono leading-relaxed select-all shadow-inner">
+                {suggestedFullPrompt}
+              </div>
+
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 text-[11px] text-zinc-500 font-sans pt-0.5">
+                <span>💡 Recommended AI tools: <strong>v0.dev</strong>, <strong>ChatGPT / DALL-E</strong>, <strong>Midjourney</strong>, or <strong>Claude</strong>.</span>
+                <span className="text-teal-900 font-medium">Generate → Download → Upload below</span>
+              </div>
+            </div>
+          )}
+
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+            {sketches.map((sk, skIdx) => {
+              const hasImage = Boolean(sk.imageUrl);
+              const screenPrompt = getScreenPrompt(skIdx, sk.screenLabel);
+              return (
+                <div
+                  key={sk.id}
+                  className={`bg-zinc-50/60 border rounded-2xl p-5 space-y-4 flex flex-col justify-between items-center text-center transition-all ${
+                    hasImage ? "border-emerald-200 bg-emerald-50/10 shadow-xs" : "border-zinc-200/80"
+                  }`}
+                >
+                  <div className="flex items-center justify-between w-full">
+                    <span className="text-xs font-mono font-bold text-zinc-800">
+                      {sk.screenLabel}
+                    </span>
+                    {hasImage ? (
+                      <span className="text-[10px] font-mono font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-full">
+                        ✓ Uploaded
+                      </span>
+                    ) : (
+                      <span className="text-[10px] font-mono font-bold text-rose-600 bg-rose-50 border border-rose-200 px-2 py-0.5 rounded-full">
+                        Required
+                      </span>
+                    )}
+                  </div>
+
+                  {/* Phone Frame Container */}
+                  <div className={`w-full aspect-[9/16] max-w-[190px] mx-auto bg-white border-2 rounded-3xl p-2.5 shadow-inner flex flex-col items-center justify-center relative overflow-hidden transition-all ${
+                    hasImage ? "border-emerald-300" : "border-zinc-300 border-dashed"
+                  }`}>
+                    {hasImage ? (
+                      <img
+                        src={sk.imageUrl!}
+                        alt={sk.screenLabel}
+                        className="w-full h-full object-cover rounded-2xl"
+                      />
+                    ) : (
+                      <div className="space-y-3 text-center p-3">
+                        <Smartphone className="h-8 w-8 text-zinc-300 mx-auto" />
+                        <p className="text-[11px] text-zinc-500 font-medium leading-tight">
+                          No screen uploaded yet
+                        </p>
+                        <p className="text-[10px] text-zinc-400 font-sans leading-tight">
+                          Generate with AI or design in Figma
+                        </p>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Action Controls */}
+                  <div className="space-y-2 w-full">
+                    {/* Copy Screen-Specific Prompt Button for Beginners */}
+                    {isBeginner && (
+                      <button
+                        type="button"
+                        onClick={() => handleCopyPrompt(screenPrompt, `screen_${sk.id}`)}
+                        className="w-full py-1.5 px-2.5 rounded-xl border border-teal-200 bg-teal-50/70 hover:bg-teal-100 text-[11px] font-mono text-teal-900 font-semibold transition-all cursor-pointer flex items-center justify-center gap-1.5 shadow-2xs"
+                      >
+                        {copiedPromptType === `screen_${sk.id}` ? (
+                          <>
+                            <Check className="h-3 w-3 text-emerald-600" />
+                            <span>Prompt Copied!</span>
+                          </>
+                        ) : (
+                          <>
+                            <Sparkles className="h-3 w-3 text-teal-700" />
+                            <span>Copy Prompt for {sk.screenLabel}</span>
+                          </>
+                        )}
+                      </button>
+                    )}
+
+                    <label className={`inline-flex items-center justify-center gap-1.5 w-full py-2 px-3 rounded-xl border text-xs font-sans font-semibold cursor-pointer transition-all shadow-2xs ${
+                      hasImage
+                        ? "bg-white border-zinc-300 hover:bg-zinc-100 text-zinc-800"
+                        : "bg-teal-800 hover:bg-teal-700 border-teal-800 text-white"
+                    }`}>
+                      <Upload className="h-3.5 w-3.5" />
+                      <span>{hasImage ? "Replace Screen" : "Upload Screen"}</span>
+                      <input
+                        type="file"
+                        accept="image/*"
+                        className="hidden"
+                        onChange={(e) => {
+                          if (e.target.files && e.target.files[0]) {
+                            handleImageUpload(sk.id, e.target.files[0]);
+                          }
+                        }}
+                      />
+                    </label>
+
+                    {hasImage && (
+                      <button
+                        type="button"
+                        onClick={() => handleRemoveImage(sk.id)}
+                        className="w-full py-1 text-[11px] font-mono text-zinc-400 hover:text-rose-600 transition-colors cursor-pointer flex items-center justify-center gap-1"
+                      >
+                        <Trash2 className="h-3 w-3" />
+                        <span>Remove Screen</span>
+                      </button>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
           </div>
         </section>
 
@@ -1145,6 +1319,12 @@ export default function DesignPhase({
                 {!isFeaturesValid && <li>At least 3 Version 1 features (currently {v1Features.length}/3)</li>}
                 {!isScreensValid && <li>At least 3 completed screen plans</li>}
                 {!isJourneyValid && <li>User journey flow</li>}
+                {!isSketchesValid && (
+                  <li>
+                    Upload all 3 screen mockups / sketches (currently{" "}
+                    {sketches.filter((s) => Boolean(s.imageUrl)).length}/3 uploaded)
+                  </li>
+                )}
                 {!isDecisionsValid && <li>Design decisions explanation</li>}
               </ul>
             </div>

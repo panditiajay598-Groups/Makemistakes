@@ -20,8 +20,9 @@ export class EmailService {
   private static getSmtpAccounts(): SmtpAccount[] {
     const accounts: SmtpAccount[] = [];
     const defaultHost = process.env.SMTP_HOST || "smtp.gmail.com";
-    const defaultPort = parseInt(process.env.SMTP_PORT || "587", 10);
-    const defaultSecure = process.env.SMTP_SECURE === "true";
+    const rawPort = process.env.SMTP_PORT || "465";
+    const defaultPort = parseInt(rawPort, 10);
+    const defaultSecure = process.env.SMTP_SECURE === "true" || (rawPort === "465" && process.env.SMTP_SECURE !== "false");
 
     // Primary SMTP User
     if (process.env.SMTP_USER && process.env.SMTP_PASS && !process.env.SMTP_PASS.includes("Tarak@renu")) {
@@ -88,6 +89,9 @@ export class EmailService {
             user: selectedAccount.user,
             pass: selectedAccount.pass,
           },
+          // 8-second connection timeout so fallback occurs quickly if network blocks SMTP ports
+          connectionTimeout: 8000,
+          greetingTimeout: 8000,
         });
 
         const textContent = `Your MakeMistakes verification code is: ${otp}\n\nClick the link below to verify your account:\n${redirectUrl}\n\nThis code expires in 10 minutes. If you did not request this code, please ignore this email.`;
@@ -104,7 +108,7 @@ export class EmailService {
         console.log(`[SMTP Success] Email sent to ${email} using account ${selectedAccount.user}`);
         return { success: true };
       } catch (err: any) {
-        console.warn(`[SMTP Warning] Account ${selectedAccount.user} failed: ${err?.message}. Trying fallback...`);
+        console.warn(`[SMTP Warning] Account ${selectedAccount.user} failed: ${err?.message}. Trying Resend API fallback...`);
       }
     }
 
@@ -119,8 +123,8 @@ export class EmailService {
             "Content-Type": "application/json",
           },
           body: JSON.stringify({
-            from: process.env.RESEND_FROM || "MakeMistakes Team <Support@makemistakes.in>",
-            reply_to: process.env.REPLY_TO || "Support@makemistakes.in",
+            from: process.env.RESEND_FROM || "MakeMistakes Team <onboarding@resend.dev>",
+            reply_to: process.env.REPLY_TO || "support@makemistakes.in",
             to: [email],
             subject,
             html,
@@ -132,7 +136,7 @@ export class EmailService {
           console.log(`[Resend API Success] Email ID: ${resData.id} delivered to ${email}`);
           return { success: true };
         }
-        console.warn("[Resend API Notice]:", resData);
+        console.warn("[Resend API Error Notice]:", resData);
       } catch (err: any) {
         console.warn("Resend API failed, trying test inbox fallback:", err?.message);
       }

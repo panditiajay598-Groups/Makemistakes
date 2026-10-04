@@ -18,17 +18,20 @@ export async function POST(req: Request) {
     saveCode(email, code);
 
     const smtpHost = process.env.SMTP_HOST || "smtp.gmail.com";
-    const smtpPort = parseInt(process.env.SMTP_PORT || "587", 10);
+    const rawPort = process.env.SMTP_PORT || "465";
+    const smtpPort = parseInt(rawPort, 10);
     const smtpUser = process.env.SMTP_USER;
     const smtpPass = process.env.SMTP_PASS;
+    const smtpSecure = process.env.SMTP_SECURE === "true" || (rawPort === "465" && process.env.SMTP_SECURE !== "false");
 
     const appBaseUrl = process.env.NEXT_PUBLIC_APP_URL || process.env.APP_URL || "http://localhost:3000";
 
     const emailTemplate = (targetEmail: string, verificationCode: string) => {
       const redirectUrl = `${appBaseUrl}/auth/verify?email=${encodeURIComponent(targetEmail)}&code=${encodeURIComponent(verificationCode)}`;
-      const fromHeader = process.env.SMTP_FROM || (smtpUser ? `"MakeMistakes Team" <${smtpUser}>` : `"MakeMistakes Verification" <noreply@makemistakes.com>`);
+      const fromHeader = process.env.SMTP_FROM || `"MakeMistakes Team" <support@makemistakes.in>`;
       return {
         from: fromHeader,
+        replyTo: process.env.REPLY_TO || "support@makemistakes.in",
         to: targetEmail,
         subject: `${verificationCode} is your MakeMistakes Verification Code`,
         html: `
@@ -55,11 +58,12 @@ export async function POST(req: Request) {
         const transporter = nodemailer.createTransport({
           host: smtpHost,
           port: smtpPort,
-          secure: process.env.SMTP_SECURE === "true",
+          secure: smtpSecure,
           auth: {
             user: smtpUser,
             pass: smtpPass,
           },
+          connectionTimeout: 8000,
         });
 
         await transporter.sendMail(emailTemplate(email, code));

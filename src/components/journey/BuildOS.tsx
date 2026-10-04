@@ -18,6 +18,14 @@ import {
   Smartphone,
   PanelLeftClose,
   PanelLeftOpen,
+  ChevronDown,
+  ChevronUp,
+  Layers,
+  Database,
+  Compass,
+  Code2,
+  ShieldAlert,
+  Cpu,
 } from "lucide-react";
 import { getJourneyUserId } from "@/lib/journeyUser";
 import { ProblemData } from "@/lib/problemContent";
@@ -102,10 +110,33 @@ function FileTree({
   );
 }
 
-export default function BuildOS({ problemId, productName: propName, problemData, onReadyChange, onComplete }: Props) {
-  const userId = useMemo(() => getJourneyUserId(), []);
+export default function BuildOS({ problemId, productName: propName, problemData, onReadyChange, onComplete, userId: propUserId }: Props) {
+  const userId = useMemo(() => propUserId || getJourneyUserId(), [propUserId]);
   const workspace = useMemo(() => deriveBuildWorkspace(problemData), [problemData]);
   const productName = propName || workspace.productName;
+
+  // Determine difficulty level: Beginner, Intermediate, or Advanced
+  const difficulty = useMemo<"Beginner" | "Intermediate" | "Advanced">(() => {
+    const raw = (problemData?.difficulty || (problemData as any)?.learning?.level || "Beginner").toString().toLowerCase();
+    if (raw.includes("adv") || raw.includes("expert")) return "Advanced";
+    if (raw.includes("inter")) return "Intermediate";
+    return "Beginner";
+  }, [problemData]);
+
+  // Build mode derived from difficulty (can later be from DB student profile)
+  const buildMode = useMemo<"guided" | "assisted" | "independent">(() => {
+    if (difficulty === "Advanced") return "independent";
+    if (difficulty === "Intermediate") return "assisted";
+    return "guided";
+  }, [difficulty]);
+
+  const buildModeLabel = buildMode === "guided" ? "Guided Build" : buildMode === "assisted" ? "Assisted Build" : "Independent Build";
+  const buildModeColor = buildMode === "guided" ? "emerald" : buildMode === "assisted" ? "amber" : "violet";
+
+  // Entire Previous Journey Context (Phases 1 - 4)
+  const [journeyPhases, setJourneyPhases] = useState<any>(null);
+  const [journeyLoading, setJourneyLoading] = useState(true);
+  const [showBlueprint, setShowBlueprint] = useState(false);
 
   const [phase, setPhase] = useState<"booting" | "ready" | "error">("booting");
   const [logs, setLogs] = useState<string[]>(["Preparing BuildOS workspace..."]);
@@ -142,11 +173,103 @@ export default function BuildOS({ problemId, productName: propName, problemData,
   const [novaMessages, setNovaMessages] = useState<Array<{ role: "user" | "assistant"; content: string }>>([
     {
       role: "assistant",
-      content: `Welcome to ${workspace.productName} in BuildOS!\n\nI'm Nova — your AI product coding mentor. You own this workspace.\n\nAsk me to build landing sections, create forms, write APIs, or debug TypeScript errors. I'll propose file changes that you can review and apply directly into your project workspace!`,
+      content: `Welcome to **${workspace.productName}** in BuildOS!\n\nI'm Nova — your AI product coding mentor. I'm loading your journey blueprint from Phases 1 through 4...`,
     },
   ]);
   const [novaInput, setNovaInput] = useState("");
   const [novaLoading, setNovaLoading] = useState(false);
+
+  // Fetch full journey data (Phases 1-4) on mount
+  useEffect(() => {
+    let isMounted = true;
+    async function loadJourneyContext() {
+      const pid = problemId || problemData?.problemId || (problemData as any)?.id;
+      if (!pid) {
+        if (isMounted) setJourneyLoading(false);
+        return;
+      }
+
+      // 1. Try localStorage cache for instant availability
+      try {
+        const rawLocal = localStorage.getItem(`make_mistakes_phases_${pid}`) || localStorage.getItem(`journey_phases_${pid}`);
+        if (rawLocal) {
+          const parsed = JSON.parse(rawLocal);
+          if (isMounted && parsed) setJourneyPhases(parsed);
+        }
+      } catch {
+        // ignore storage parse errors
+      }
+
+      // 2. Fetch authoritative state from DB
+      try {
+        const effectiveUid = propUserId || userId || getJourneyUserId();
+        const res = await fetch(`/api/journey/user-data?userId=${encodeURIComponent(effectiveUid)}&problemId=${encodeURIComponent(pid)}`);
+        if (res.ok) {
+          const data = await res.json();
+          if (data?.phases && isMounted) {
+            setJourneyPhases(data.phases);
+          }
+        }
+      } catch (err) {
+        console.error("Failed to load journey context in BuildOS:", err);
+      } finally {
+        if (isMounted) setJourneyLoading(false);
+      }
+    }
+
+    loadJourneyContext();
+    return () => {
+      isMounted = false;
+    };
+  }, [problemId, problemData?.problemId, propUserId, userId]);
+
+  // Personalize Nova initial greeting once journey blueprint is loaded
+  const hasPersonalizedGreeting = useRef(false);
+  useEffect(() => {
+    if (!journeyPhases && journeyLoading) return;
+    if (hasPersonalizedGreeting.current) return;
+    hasPersonalizedGreeting.current = true;
+
+    const design = journeyPhases?.design || {};
+    const plan = journeyPhases?.plan || {};
+    const sketches = Array.isArray(design.sketches) ? design.sketches : [];
+    const validSketches = sketches.filter((s: any) => s.imageUrl);
+    const techStack = plan.techDecisions ? Object.values(plan.techDecisions).filter(Boolean).join(", ") : "";
+    const goal = design.productGoal || problemData?.title || workspace.productName;
+
+    let greeting = `Welcome to **${workspace.productName}** in BuildOS! 🚀\n\n`;
+    greeting += `I've loaded your entire blueprint from Phase 1 through Phase 4:\n`;
+    greeting += `• **Product Goal:** ${goal}\n`;
+    if (design.selectedUsers?.length || design.customUserRole) {
+      greeting += `• **Target Persona:** ${design.selectedUsers?.join(", ") || design.customUserRole}\n`;
+    }
+    if (validSketches.length > 0) {
+      greeting += `• **Uploaded Mockups:** ${validSketches.length} screen designs linked (${validSketches.map((s: any) => s.screenName || "Screen").join(", ")})\n`;
+    }
+    if (techStack) {
+      greeting += `• **Tech Stack Chosen:** ${techStack}\n`;
+    }
+    if (plan.modules?.length) {
+      greeting += `• **Planned Modules:** ${plan.modules.map((m: any) => m.name || m.title).join(", ")}\n`;
+    }
+
+    greeting += `\n---\n`;
+
+    if (buildMode === "guided") {
+      greeting += `📚 **Guided Build Mode** — Your job is to build this product. My job is to help you learn.\n\nI will:\n✓ Explain concepts when you're confused\n✓ Give hints to point you in the right direction\n✓ Show small focused examples you can learn from\n✓ Help you debug specific errors\n\nI will not automatically write entire features for you — that would skip the learning. **Start with Mission 01** and ask me to explain anything you don't understand yet.`;
+    } else if (buildMode === "assisted") {
+      greeting += `🔧 **Assisted Build Mode** — You own most of the implementation. I help when you're genuinely stuck.\n\nAsk me for: architecture advice, TypeScript types, debugging help, code review.\nBefore I write code for you — tell me what you've tried first.`;
+    } else {
+      greeting += `🚀 **Independent Build Mode** — You build. I review.\n\nShare your approach, architecture decisions, and code with me. I'll challenge your assumptions, identify edge cases, and review trade-offs. The implementation is yours.`;
+    }
+
+    setNovaMessages([
+      {
+        role: "assistant",
+        content: greeting,
+      },
+    ]);
+  }, [journeyPhases, journeyLoading, buildMode, workspace.productName, problemData?.title]);
 
   const parseNovaProposals = useCallback((text: string) => {
     if (!text) return [];
@@ -515,10 +638,20 @@ export default function BuildOS({ problemId, productName: propName, problemData,
           context: {
             productName,
             statement: workspace.statement,
-            missionTitle: activeMission.title,
-            activeFile: activePath,
+            problemStatement: problemData?.title || workspace.statement,
+            problemDescription: problemData?.problemStatement || (problemData as any)?.description || "",
             category: workspace.category,
+            difficulty,
+            buildMode,
+            taskOwnership: activeMission.ownership,
+            missionTitle: activeMission.title,
+            buildObjective: activeMission.whatThisMeans || "",
+            activeFile: activePath,
             fileCode: content,
+            discover: journeyPhases?.discover || null,
+            research: journeyPhases?.research || null,
+            design: journeyPhases?.design || null,
+            plan: journeyPhases?.plan || null,
           },
         }),
       });
@@ -814,26 +947,32 @@ export default function BuildOS({ problemId, productName: propName, problemData,
                 </button>
 
                 {showRoadmapSection && (
-                  <div className="max-h-56 overflow-y-auto px-2 py-1 space-y-1 divide-y divide-zinc-900">
+                  <div className="max-h-56 overflow-y-auto px-2 py-1 space-y-0.5">
                     {workspace.missions.map((m, idx) => {
                       const isCompleted = completedSteps.includes(m.id);
                       const isActive = activeMissionIndex === idx;
+                      const isLocked = idx > activeMissionIndex + 1 && !isCompleted;
                       return (
                         <button
                           key={m.id}
                           type="button"
-                          onClick={() => handleSelectStep(idx)}
+                          onClick={() => !isLocked && handleSelectStep(idx)}
+                          disabled={isLocked}
                           className={`w-full flex items-start gap-2 p-2 rounded text-left text-xs transition-colors ${
                             isActive
                               ? "bg-teal-950/60 border border-teal-800/60 text-teal-200"
+                              : isCompleted
+                              ? "text-emerald-400/80 hover:bg-zinc-900"
+                              : isLocked
+                              ? "text-zinc-700 cursor-not-allowed"
                               : "hover:bg-zinc-900 text-zinc-400"
                           }`}
                         >
-                          <div className="mt-0.5">
+                          <div className="mt-0.5 shrink-0">
                             {isCompleted ? (
-                              <Check className="h-3.5 w-3.5 text-emerald-400 shrink-0" />
+                              <span className="text-emerald-400 text-xs">✓</span>
                             ) : isActive ? (
-                              <div className="h-2 w-2 rounded-full bg-teal-400 animate-pulse shrink-0 mt-1" />
+                              <span className="text-teal-400 text-xs">→</span>
                             ) : (
                               <span className="text-[10px] font-mono text-zinc-600 font-bold">{idx + 1}</span>
                             )}
@@ -842,8 +981,10 @@ export default function BuildOS({ problemId, productName: propName, problemData,
                             <div className="flex items-center justify-between gap-1">
                               <span className="font-medium truncate text-[11px]">{m.title}</span>
                             </div>
-                            <span className="text-[9px] font-mono text-zinc-500 uppercase block">
-                              {m.ownership === "provided" ? "Provided" : "You Write"}
+                            <span className={`text-[9px] font-mono uppercase block ${
+                              m.ownership === "provided" ? "text-zinc-600" : "text-teal-600"
+                            }`}>
+                              {m.ownership === "provided" ? "📖 Study" : "✏️ Your Task"} · {m.time || "15–25 min"}
                             </span>
                           </div>
                         </button>
@@ -854,6 +995,7 @@ export default function BuildOS({ problemId, productName: propName, problemData,
               </div>
             </aside>
           )}
+
 
           {/* ==================== 2. CENTRAL CODE EDITOR & BOTTOM PANEL ==================== */}
           <main className="flex-1 flex flex-col min-w-0 bg-[#07090e]">
@@ -1088,17 +1230,24 @@ export default function BuildOS({ problemId, productName: propName, problemData,
 
               {/* Bottom Validation Action Bar */}
               <div className="flex items-center justify-between px-4 py-1.5 bg-[#0a0d14] border-t border-zinc-800/80 shrink-0">
-                <div className="text-[11px] text-zinc-400 font-mono">
-                  Step {activeMissionIndex + 1} of {workspace.missions.length} · {activeMission.ownership === "provided" ? "Provided Scaffold" : "User Write Step"}
+                <div className="flex items-center gap-2 text-[11px] font-mono">
+                  <span className="text-zinc-500">Mission {activeMissionIndex + 1}/{workspace.missions.length}</span>
+                  <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${
+                    activeMission.ownership === "provided"
+                      ? "bg-zinc-800 text-zinc-400"
+                      : "bg-teal-950/80 text-teal-400 border border-teal-800/50"
+                  }`}>
+                    {activeMission.ownership === "provided" ? "📖 Study" : "✏️ Your Task"}
+                  </span>
                 </div>
 
                 <button
                   type="button"
                   onClick={handleValidateStep}
-                  className="flex items-center gap-1.5 px-3 py-1 bg-emerald-500 hover:bg-emerald-400 text-zinc-950 font-bold rounded text-xs transition-colors shadow-sm cursor-pointer"
+                  className="flex items-center gap-1.5 px-3 py-1 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded text-xs transition-colors shadow-sm cursor-pointer"
                 >
                   <Check className="h-3.5 w-3.5 stroke-[3]" />
-                  <span>Validate Task {activeMissionIndex + 1} {activeMissionIndex < workspace.missions.length - 1 ? `→ Task ${activeMissionIndex + 2}` : ""}</span>
+                  <span>Submit &amp; Validate</span>
                 </button>
               </div>
             </div>
@@ -1107,26 +1256,133 @@ export default function BuildOS({ problemId, productName: propName, problemData,
           {/* ==================== 4. RIGHT NOVA AI COACH SIDEBAR ==================== */}
           {showNovaPanel && (
             <aside className="w-[300px] shrink-0 flex flex-col bg-[#090b10] min-h-0 border-l border-zinc-800/80">
-              {/* Header Box */}
-              <div className="p-3 border-b border-zinc-800/80 flex items-center justify-between bg-[#0b0e14]">
-                <div className="flex items-center gap-2">
-                  <Sparkles className="h-4 w-4 text-teal-400" />
-                  <span className="font-bold text-xs text-zinc-100 uppercase tracking-wider">Nova AI Coach</span>
+              {/* Nova Mentor Header — Build Mode */}
+              <div className="border-b border-zinc-800/80 bg-[#0b0e14]">
+                <div className="flex items-center justify-between px-3 pt-3 pb-2">
+                  <div className="flex items-center gap-2">
+                    <Sparkles className="h-4 w-4 text-teal-400" />
+                    <span className="font-bold text-xs text-zinc-100 uppercase tracking-wider">Nova AI Mentor</span>
+                  </div>
+                  <span className={`text-[10px] font-mono px-2 py-0.5 rounded-full font-semibold ${
+                    buildMode === "guided"
+                      ? "bg-emerald-950/80 text-emerald-300 border border-emerald-700/60"
+                      : buildMode === "assisted"
+                      ? "bg-amber-950/80 text-amber-300 border border-amber-700/60"
+                      : "bg-violet-950/80 text-violet-300 border border-violet-700/60"
+                  }`}>
+                    {buildMode === "guided" ? "📚 Guided Build" : buildMode === "assisted" ? "🔧 Assisted Build" : "🚀 Independent Build"}
+                  </span>
                 </div>
-                <span className="text-[10px] font-mono text-teal-400 bg-teal-950 px-1.5 py-0.5 rounded border border-teal-800/60">
-                  ONLINE
-                </span>
+                {/* Role Clarity Strip */}
+                <div className="mx-3 mb-3 rounded-lg bg-zinc-900/80 border border-zinc-800/60 divide-y divide-zinc-800/60 text-[10px]">
+                  <div className="flex items-center gap-2 px-2.5 py-1.5">
+                    <span className="text-zinc-500 w-14 shrink-0">Your role:</span>
+                    <span className="font-bold text-teal-300 uppercase tracking-wide">
+                      {buildMode === "guided" ? "BUILD THE PRODUCT" : buildMode === "assisted" ? "OWN THE CODE" : "BUILD INDEPENDENTLY"}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2 px-2.5 py-1.5">
+                    <span className="text-zinc-500 w-14 shrink-0">Nova:</span>
+                    <span className="font-bold text-amber-300 uppercase tracking-wide">
+                      {buildMode === "guided" ? "TEACH & GUIDE" : buildMode === "assisted" ? "ASSIST WHEN STUCK" : "REVIEW & AUDIT"}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2 px-2.5 py-1.5">
+                    <span className="text-zinc-500 w-14 shrink-0">Mission:</span>
+                    <span className="text-zinc-300 truncate">{activeMission.title}</span>
+                  </div>
+                </div>
               </div>
 
-              {/* Step Context Card */}
-              <div className="p-3 border-b border-zinc-800/80 space-y-1.5 bg-[#06080d]">
-                <span className="text-[10px] font-bold uppercase tracking-wider text-teal-400">BuildOS Workspace</span>
-                <p className="text-xs text-zinc-300 leading-relaxed">
-                  Ask Nova AI to build features, write components, or fix errors. Apply code proposals directly into your project.
-                </p>
+              {/* Collapsible Journey Blueprint Drawer */}
+              <div className="border-b border-zinc-800/80 bg-[#06080d]">
+                <button
+                  type="button"
+                  onClick={() => setShowBlueprint((prev) => !prev)}
+                  className="w-full px-3 py-2 flex items-center justify-between text-left hover:bg-zinc-900/40 transition-colors cursor-pointer"
+                >
+                  <div className="flex items-center gap-1.5 text-[11px] font-semibold text-teal-400">
+                    <Compass className="h-3.5 w-3.5" />
+                    <span>Journey Blueprint</span>
+                    <span className="text-[9px] px-1.5 py-0.2 rounded bg-zinc-800 text-zinc-300 font-mono">
+                      Phases 1–4 Loaded
+                    </span>
+                  </div>
+                  {showBlueprint ? (
+                    <ChevronUp className="h-3.5 w-3.5 text-zinc-400" />
+                  ) : (
+                    <ChevronDown className="h-3.5 w-3.5 text-zinc-400" />
+                  )}
+                </button>
+
+                {showBlueprint && (
+                  <div className="px-3 pb-3 pt-1 space-y-2 text-[11px] text-zinc-300 border-t border-zinc-900 bg-zinc-950/70 max-h-56 overflow-y-auto font-mono">
+                    <div>
+                      <span className="text-zinc-500 block text-[9px] uppercase font-bold">Problem Statement</span>
+                      <p className="text-zinc-200 text-[10px] line-clamp-2">{problemData?.title || workspace.statement}</p>
+                    </div>
+
+                    {journeyPhases?.design?.productGoal && (
+                      <div>
+                        <span className="text-zinc-500 block text-[9px] uppercase font-bold">Product Goal</span>
+                        <p className="text-teal-300 text-[10px]">{journeyPhases.design.productGoal}</p>
+                      </div>
+                    )}
+
+                    {(journeyPhases?.design?.selectedUsers?.length || journeyPhases?.design?.customUserRole) && (
+                      <div>
+                        <span className="text-zinc-500 block text-[9px] uppercase font-bold">Target Persona</span>
+                        <p className="text-zinc-300 text-[10px]">
+                          {journeyPhases?.design?.selectedUsers?.join(", ") || journeyPhases?.design?.customUserRole}
+                        </p>
+                      </div>
+                    )}
+
+                    {Array.isArray(journeyPhases?.design?.sketches) && journeyPhases.design.sketches.filter((s: any) => s.imageUrl).length > 0 && (
+                      <div>
+                        <span className="text-zinc-500 block text-[9px] uppercase font-bold">Uploaded Mockups</span>
+                        <p className="text-emerald-400 text-[10px]">
+                          ✓ {journeyPhases.design.sketches.filter((s: any) => s.imageUrl).length} screens uploaded:{" "}
+                          {journeyPhases.design.sketches.filter((s: any) => s.imageUrl).map((s: any) => s.screenName || "Screen").join(", ")}
+                        </p>
+                      </div>
+                    )}
+
+                    {journeyPhases?.plan?.techDecisions && Object.keys(journeyPhases.plan.techDecisions).length > 0 && (
+                      <div>
+                        <span className="text-zinc-500 block text-[9px] uppercase font-bold">Tech Stack Decisions</span>
+                        <div className="flex flex-wrap gap-1 mt-0.5">
+                          {Object.entries(journeyPhases.plan.techDecisions).map(([k, v]) => (
+                            <span key={k} className="px-1.5 py-0.5 rounded bg-zinc-800 text-[9px] text-zinc-300">
+                              {k}: {String(v)}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {Array.isArray(journeyPhases?.plan?.modules) && journeyPhases.plan.modules.length > 0 && (
+                      <div>
+                        <span className="text-zinc-500 block text-[9px] uppercase font-bold">Planned Modules</span>
+                        <p className="text-zinc-300 text-[10px]">
+                          {journeyPhases.plan.modules.map((m: any) => m.name || m.title).join(" · ")}
+                        </p>
+                      </div>
+                    )}
+
+                    <div className="pt-1 border-t border-zinc-800/60 text-[9px] text-zinc-400">
+                      AI implementation:{" "}
+                      <strong className={`${
+                        buildMode === "guided" ? "text-amber-400" : buildMode === "assisted" ? "text-teal-300" : "text-violet-300"
+                      }`}>
+                        {buildMode === "guided" ? "Limited — You implement" : buildMode === "assisted" ? "Moderate — When needed" : "On request only"}
+                      </strong>
+                    </div>
+                  </div>
+                )}
               </div>
 
-              {/* Top Prompts & Chat Input Search Bar */}
+              {/* Chat Input & Hint Ladder */}
               <div className="p-2.5 border-b border-zinc-800/80 bg-[#0b0e15] space-y-2">
                 <form
                   onSubmit={(e) => {
@@ -1139,7 +1395,13 @@ export default function BuildOS({ problemId, productName: propName, problemData,
                     type="text"
                     value={novaInput}
                     onChange={(e) => setNovaInput(e.target.value)}
-                    placeholder="Ask Nova AI to build or fix..."
+                    placeholder={
+                      buildMode === "guided"
+                        ? "Ask for an explanation, hint, or debug help..."
+                        : buildMode === "assisted"
+                        ? "Share your code or ask what you're stuck on..."
+                        : "Share your approach for review or audit..."
+                    }
                     className="flex-1 bg-zinc-900 border border-zinc-800 rounded px-2.5 py-1.5 text-xs text-zinc-200 placeholder-zinc-500 outline-none focus:border-teal-500/80"
                   />
                   <button
@@ -1151,28 +1413,58 @@ export default function BuildOS({ problemId, productName: propName, problemData,
                   </button>
                 </form>
 
-                <div className="flex flex-wrap gap-1 text-[10px]">
-                  <button
-                    type="button"
-                    onClick={() => sendNovaMessage("Create a responsive Navigation Bar component for " + productName)}
-                    className="px-2 py-1 rounded bg-teal-950/80 hover:bg-teal-900/80 text-teal-300 border border-teal-800/50 transition-colors cursor-pointer"
-                  >
-                    + Create Navbar
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => sendNovaMessage("Build a Create Form component for " + productName)}
-                    className="px-2 py-1 rounded bg-zinc-800/80 hover:bg-zinc-700/80 text-zinc-300 transition-colors cursor-pointer"
-                  >
-                    + Build Form
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => sendNovaMessage("Fix TypeScript and import issues in active file")}
-                    className="px-2 py-1 rounded bg-zinc-800/80 hover:bg-zinc-700/80 text-zinc-300 transition-colors cursor-pointer"
-                  >
-                    Fix errors
-                  </button>
+                {/* Hint Ladder Buttons — prefer lower levels first */}
+                <div className="space-y-1">
+                  <div className="text-[9px] text-zinc-500 uppercase tracking-wider font-bold">Available Help</div>
+                  <div className="flex flex-wrap gap-1 text-[10px]">
+                    <button
+                      type="button"
+                      onClick={() => sendNovaMessage(`Explain the concept I need to understand for this task: "${activeMission.title}" — what is it, why does it exist, and how does it work?`)}
+                      className="px-2 py-1 rounded bg-zinc-900 hover:bg-zinc-800 text-zinc-300 border border-zinc-700/50 transition-colors cursor-pointer"
+                      title="Get a concept explanation — no code"
+                    >
+                      💡 Explain
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => sendNovaMessage(`Give me a directional hint to get started on "${activeMission.title}" without giving me the full solution`)}
+                      className="px-2 py-1 rounded bg-zinc-900 hover:bg-zinc-800 text-zinc-300 border border-zinc-700/50 transition-colors cursor-pointer"
+                      title="Get a nudge in the right direction"
+                    >
+                      🧭 Give a Hint
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => sendNovaMessage(`Show me a small focused example relevant to "${activeMission.title}" — not my full solution, just a pattern I can learn from`)}
+                      className="px-2 py-1 rounded bg-zinc-900 hover:bg-zinc-800 text-zinc-300 border border-zinc-700/50 transition-colors cursor-pointer"
+                      title="See a small focused example"
+                    >
+                      📋 Example
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => sendNovaMessage(`I'm getting an error in ${activePath}. Here's my code:\n\n${content.slice(0, 800)}\n\nHelp me understand what's wrong and how to fix it.`)}
+                      className="px-2 py-1 rounded bg-rose-950/60 hover:bg-rose-950/80 text-rose-300 border border-rose-800/50 transition-colors cursor-pointer"
+                      title="Debug a specific error with your code"
+                    >
+                      🐛 Debug
+                    </button>
+                    {buildMode !== "guided" && (
+                      <button
+                        type="button"
+                        onClick={() => sendNovaMessage(`Review my implementation in ${activePath} for ${activeMission.title}. Here's my code:\n\n${content.slice(0, 800)}`)}
+                        className="px-2 py-1 rounded bg-teal-950/60 hover:bg-teal-950/80 text-teal-300 border border-teal-800/50 transition-colors cursor-pointer"
+                        title="Get a code review"
+                      >
+                        🔍 Review
+                      </button>
+                    )}
+                  </div>
+                  {buildMode === "guided" && activeMission.ownership === "student" && (
+                    <div className="text-[9px] text-amber-400/80 font-medium pt-0.5">
+                      ⚠️ Guided Build: Try implementing before asking for code
+                    </div>
+                  )}
                 </div>
               </div>
 

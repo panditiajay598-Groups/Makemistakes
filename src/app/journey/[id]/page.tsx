@@ -139,11 +139,12 @@ export default function GenericProblemJourneyPage() {
         // Check URL query parameters (e.g. ?step=1 or ?reset=true)
         let hasExplicitUrlStep = false;
         let urlStepVal: JourneyStep = 1;
+        let isReset = false;
 
         if (typeof window !== "undefined") {
           const urlParams = new URLSearchParams(window.location.search);
           const urlStep = urlParams.get("step");
-          const isReset = urlParams.get("reset") === "true";
+          isReset = urlParams.get("reset") === "true";
 
           if (isReset) {
             hasExplicitUrlStep = true;
@@ -155,7 +156,6 @@ export default function GenericProblemJourneyPage() {
             if (parsed >= 1 && parsed <= 9) {
               hasExplicitUrlStep = true;
               urlStepVal = parsed as JourneyStep;
-              saveJourneyStep(userId, targetId!, urlStepVal);
             }
           }
         }
@@ -181,22 +181,37 @@ export default function GenericProblemJourneyPage() {
           const uRes = await fetch(`/api/journey/user-data?userId=${encodeURIComponent(userId)}&problemId=${encodeURIComponent(targetId!)}`);
           if (uRes.ok) {
             const uData = await uRes.json();
-            const isDiscoverDone = Boolean(uData?.phases?.discover?.completed);
-            const isResearchDone = isDiscoverDone && Array.isArray(uData?.phases?.research?.sources) && uData.phases.research.sources.length > 0;
-            const isDesignDone = isResearchDone && Boolean(uData?.phases?.design?.productGoal?.trim());
-            const isPlanDone = isDesignDone && Array.isArray(uData?.phases?.plan?.modules) && uData.phases.plan.modules.length > 0;
+            const uPhases = uData?.phases || {};
 
-            if (isPlanDone) unlockedStep = 5;
-            else if (isDesignDone) unlockedStep = 4;
-            else if (isResearchDone) unlockedStep = 3;
-            else if (isDiscoverDone) unlockedStep = 2;
-            else unlockedStep = 1;
+            const isValidateDone = Boolean(uPhases?.validate?.liveUrl);
+            const isDeployDone = isValidateDone || Boolean(uPhases?.deploy?.githubRepoUrl) || Boolean(uPhases?.deploy?.connected);
+            const isTestDone = isDeployDone || Boolean(uPhases?.test?.finalSummary?.trim()) || (Array.isArray(uPhases?.test?.scenarios) && uPhases.test.scenarios.length > 0);
+            const isBuildDone = isTestDone || uPhases?.build?.status === "completed" || Boolean(uPhases?.build?.completed);
+            const isPlanDone = isBuildDone || (Array.isArray(uPhases?.plan?.modules) && uPhases.plan.modules.length > 0);
+            const isDesignDone = isPlanDone || Boolean(uPhases?.design?.productGoal?.trim());
+            const isResearchDone = isDesignDone || (Array.isArray(uPhases?.research?.sources) && uPhases.research.sources.length > 0);
+            const isDiscoverDone = isResearchDone || Boolean(uPhases?.discover?.completed);
+
+            let maxPhase = 1;
+            if (isDeployDone) maxPhase = 8;
+            else if (isTestDone) maxPhase = 7;
+            else if (isBuildDone) maxPhase = 6;
+            else if (isPlanDone) maxPhase = 5;
+            else if (isDesignDone) maxPhase = 4;
+            else if (isResearchDone) maxPhase = 3;
+            else if (isDiscoverDone) maxPhase = 2;
 
             if (typeof uData.currentPhase === "number" && uData.currentPhase >= 1 && uData.currentPhase <= 9) {
-              serverStep = Math.min(uData.currentPhase, unlockedStep) as JourneyStep;
-            } else {
-              serverStep = unlockedStep;
+              maxPhase = Math.max(maxPhase, uData.currentPhase);
             }
+            if (typeof uData.maxAllowedPhase === "number" && uData.maxAllowedPhase >= 1 && uData.maxAllowedPhase <= 9) {
+              maxPhase = Math.max(maxPhase, uData.maxAllowedPhase);
+            }
+
+            unlockedStep = Math.max(1, Math.min(8, maxPhase)) as JourneyStep;
+
+            const rawCurrentPhase = typeof uData.currentPhase === "number" ? uData.currentPhase : 1;
+            serverStep = Math.max(1, Math.min(unlockedStep, rawCurrentPhase)) as JourneyStep;
           }
         } catch (uErr) {
           console.warn("[JourneyPage] Server user-data load warning:", uErr);
@@ -204,9 +219,22 @@ export default function GenericProblemJourneyPage() {
 
         if (isSubscribed) {
           setMaxUnlockedStep(unlockedStep);
-          const rawCandidate = hasExplicitUrlStep ? urlStepVal : (serverStep || loadJourneyStep(userId, targetId!));
-          // Strict workflow: NEVER allow jumping ahead of unlocked steps without completing prior phases!
-          const finalStep = Math.min(rawCandidate, unlockedStep) as JourneyStep;
+
+          const localSaved = loadJourneyStep(userId, targetId!);
+          let finalStep: JourneyStep;
+
+          if (isReset) {
+            finalStep = 1;
+          } else if (hasExplicitUrlStep && urlStepVal > 1) {
+            // User specifically navigated to a higher step
+            finalStep = Math.min(urlStepVal, unlockedStep) as JourneyStep;
+          } else {
+            // Reopened window, refreshed, or opened with default/stale ?step=1 or no step param:
+            // ALWAYS resume from the user's highest saved progress!
+            const candidate = Math.max(serverStep, localSaved);
+            finalStep = Math.max(1, Math.min(candidate, unlockedStep)) as JourneyStep;
+          }
+
           setCurrentStep(finalStep);
           saveJourneyStep(userId, targetId!, finalStep);
           setStepHydrated(true);

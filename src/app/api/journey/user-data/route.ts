@@ -103,6 +103,38 @@ const DEFAULT_PHASES = {
   },
 };
 
+/**
+ * Compute the maximum unlocked phase based on completed phase data and saved progress.
+ * Uses non-cascading logic so that higher phase data automatically unlocks all preceding phases.
+ */
+export function computeMaxAllowedPhase(phases: any, currentPhase?: number | null): number {
+  const p = phases || {};
+  const isValidateDone = Boolean(p?.validate?.liveUrl);
+  const isDeployDone = isValidateDone || Boolean(p?.deploy?.githubRepoUrl) || Boolean(p?.deploy?.connected);
+  const isTestDone = isDeployDone || Boolean(p?.test?.finalSummary?.trim()) || (Array.isArray(p?.test?.scenarios) && p.test.scenarios.length > 0);
+  const isBuildDone = isTestDone || p?.build?.status === "completed" || Boolean(p?.build?.completed);
+  const isPlanDone = isBuildDone || (Array.isArray(p?.plan?.modules) && p.plan.modules.length > 0);
+  const isDesignDone = isPlanDone || Boolean(p?.design?.productGoal?.trim());
+  const isResearchDone = isDesignDone || (Array.isArray(p?.research?.sources) && p.research.sources.length > 0);
+  const isDiscoverDone = isResearchDone || Boolean(p?.discover?.completed);
+
+  let maxAllowed = 1;
+  if (isDeployDone) maxAllowed = 8;
+  else if (isTestDone) maxAllowed = 7;
+  else if (isBuildDone) maxAllowed = 6;
+  else if (isPlanDone) maxAllowed = 5;
+  else if (isDesignDone) maxAllowed = 4;
+  else if (isResearchDone) maxAllowed = 3;
+  else if (isDiscoverDone) maxAllowed = 2;
+
+  // Preserve any higher unlocked phase recorded in the database
+  if (typeof currentPhase === "number" && currentPhase >= 1 && currentPhase <= 9) {
+    maxAllowed = Math.max(maxAllowed, currentPhase);
+  }
+
+  return Math.max(1, Math.min(8, maxAllowed));
+}
+
 /** GET — Load user's journey data strictly scoped by userId + problemId */
 export async function GET(req: Request) {
   let client: MongoClient | null = null;
@@ -126,6 +158,7 @@ export async function GET(req: Request) {
         userId,
         problemId,
         currentPhase: 1,
+        maxAllowedPhase: 1,
         status: "in_progress",
         phases: DEFAULT_PHASES,
       });
@@ -136,18 +169,8 @@ export async function GET(req: Request) {
       ...(journey.phases || {}),
     };
 
-    const isDiscoverDone = Boolean(mergedPhases?.discover?.completed);
-    const isResearchDone = isDiscoverDone && Array.isArray(mergedPhases?.research?.sources) && mergedPhases.research.sources.length > 0;
-    const isDesignDone = isResearchDone && Boolean(mergedPhases?.design?.productGoal?.trim());
-    const isPlanDone = isDesignDone && Array.isArray(mergedPhases?.plan?.modules) && mergedPhases.plan.modules.length > 0;
-
-    let maxAllowedPhase = 1;
-    if (isPlanDone) maxAllowedPhase = 5;
-    else if (isDesignDone) maxAllowedPhase = 4;
-    else if (isResearchDone) maxAllowedPhase = 3;
-    else if (isDiscoverDone) maxAllowedPhase = 2;
-
-    const rawPhase = typeof journey.currentPhase === "number" ? journey.currentPhase : 1;
+    const maxAllowedPhase = computeMaxAllowedPhase(mergedPhases, journey.currentPhase);
+    const rawPhase = typeof journey.currentPhase === "number" && journey.currentPhase >= 1 ? journey.currentPhase : 1;
     const safeCurrentPhase = Math.min(rawPhase, maxAllowedPhase);
 
     return NextResponse.json({
@@ -210,18 +233,16 @@ export async function POST(req: Request) {
         ...(existingDoc?.phases || {}),
         ...(phase && data !== undefined ? { [phase]: data } : {}),
       };
-      const isDiscoverDone = Boolean(currentPhases?.discover?.completed);
-      const isResearchDone = isDiscoverDone && Array.isArray(currentPhases?.research?.sources) && currentPhases.research.sources.length > 0;
-      const isDesignDone = isResearchDone && Boolean(currentPhases?.design?.productGoal?.trim());
-      const isPlanDone = isDesignDone && Array.isArray(currentPhases?.plan?.modules) && currentPhases.plan.modules.length > 0;
 
-      let maxPhase = 1;
-      if (isPlanDone) maxPhase = 5;
-      else if (isDesignDone) maxPhase = 4;
-      else if (isResearchDone) maxPhase = 3;
-      else if (isDiscoverDone) maxPhase = 2;
+      const maxPhase = computeMaxAllowedPhase(currentPhases, existingDoc?.currentPhase);
 
-      setFields.currentPhase = Math.min(currentPhase, maxPhase);
+      // Protect against progress reset: never downgrade currentPhase unless explicitly requested with reset: true
+      const isExplicitReset = Boolean(body.reset);
+      const safeCurrentPhase = isExplicitReset
+        ? currentPhase
+        : Math.max(existingDoc?.currentPhase || 1, Math.min(currentPhase, maxPhase));
+
+      setFields.currentPhase = safeCurrentPhase;
     }
 
     if (customStatus) {

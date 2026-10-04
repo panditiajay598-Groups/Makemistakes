@@ -107,7 +107,7 @@ export default function DiscoverPhase({
       [questionId]: optionIndex,
     };
     setUserAnswers(updated);
-    persistData(updated, submissionState.isAllCorrect, 0);
+    persistData(updated, submissionState.isAllCorrect, submissionState.isAllCorrect ? 50 : 0);
 
     if (submissionState.submitted && !submissionState.isAllCorrect) {
       setSubmissionState({
@@ -119,6 +119,7 @@ export default function DiscoverPhase({
   };
 
   const handleSaveProgress = () => {
+    persistData(userAnswers, submissionState.isAllCorrect, submissionState.isAllCorrect ? 50 : 0);
     setIsSaved(true);
     setTimeout(() => setIsSaved(false), 2500);
   };
@@ -143,6 +144,7 @@ export default function DiscoverPhase({
         isAllCorrect: true,
         incorrectQuestions: [],
       });
+      persistData(userAnswers, true, 50);
       onComplete();
     } else {
       setSubmissionState({
@@ -150,6 +152,7 @@ export default function DiscoverPhase({
         isAllCorrect: false,
         incorrectQuestions: incorrect,
       });
+      persistData(userAnswers, false, 0);
     }
   };
 
@@ -409,8 +412,13 @@ export default function DiscoverPhase({
 
                 {isIncorrect && (
                   <div className="p-2.5 bg-rose-100/80 border border-rose-200 rounded-xl text-[10px] text-rose-900 flex items-start gap-1.5">
-                    <AlertCircle className="h-3 w-3 text-rose-600 shrink-0 mt-0.5" />
-                    <span>{q.explanation}</span>
+                    <AlertCircle className="h-3.5 w-3.5 text-rose-600 shrink-0 mt-0.5" />
+                    <div className="space-y-0.5 text-left">
+                      <span className="font-bold text-rose-800 uppercase tracking-wider text-[9px] block">
+                        Explanation & Concept:
+                      </span>
+                      <p className="leading-snug text-rose-900 font-medium">{q.explanation}</p>
+                    </div>
                   </div>
                 )}
               </div>

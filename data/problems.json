@@ -221,13 +221,13 @@
         "questionNumber": "01",
         "question": "What is the primary operational bottleneck identified in 'Why do micro-SMEs waste 10+ hours weekly on invoice management?'?",
         "options": [
-          "Fragmented systems and lack of automated escrow and verification",
+          "Fragmented systems and lack of automated verification create severe transaction friction",
           "Excessive global hardware shipping taxes",
           "Slower consumer smartphone internet speeds",
           "Lack of available social media advertising channels"
         ],
         "correctIndex": 0,
-        "explanation": "Fragmented workflows and lack of automated verification create severe transaction friction and trust deficit.",
+        "explanation": "Fragmented systems and lack of automated verification create severe transaction friction and trust deficit.",
         "xp": 10
       },
       {
@@ -241,7 +241,7 @@
           "Relying entirely on one-time referral bonuses"
         ],
         "correctIndex": 1,
-        "explanation": "Scaling without positive transaction-level unit economics rapidly consumes capital and leads to failure.",
+        "explanation": "Achieving positive gross margin and unit economics on individual transactions is essential; scaling without it rapidly consumes capital.",
         "xp": 10
       },
       {
@@ -249,13 +249,13 @@
         "questionNumber": "03",
         "question": "How does implementing real-time transparent tracking impact user behavior?",
         "options": [
-          "It increases trust and retention by reducing operational uncertainty",
+          "Real-time visibility reduces user anxiety and strengthens platform trust and engagement",
           "It forces customers to abandon mobile applications",
           "It increases customer churn by 50%",
           "It mandates daily manual phone calls"
         ],
         "correctIndex": 0,
-        "explanation": "Real-time visibility reduces user anxiety and strengthens platform trust and engagement.",
+        "explanation": "Real-time visibility reduces user anxiety and strengthens platform trust and engagement by eliminating operational uncertainty.",
         "xp": 10
       },
       {
@@ -269,7 +269,7 @@
           "Single-channel marketing is always optimal"
         ],
         "correctIndex": 1,
-        "explanation": "Validating retention and product-market fit is necessary before spending heavily on acquisition.",
+        "explanation": "Customer retention and core value proposition must be validated before blitzscaling; marketing spend cannot overcome broken unit economics.",
         "xp": 10
       },
       {
@@ -283,7 +283,7 @@
           "Manual cash-on-delivery logging"
         ],
         "correctIndex": 0,
-        "explanation": "Automated escrows release funds conditionally only when pre-defined milestone criteria are verified.",
+        "explanation": "Automated escrow smart contracts and webhook triggers ensure secure, conditional release of funds upon verified milestone delivery.",
         "xp": 10
       }
     ]
@@ -347,13 +347,13 @@
         "questionNumber": "01",
         "question": "What is the primary operational bottleneck identified in 'Why can't manufacturers rely on guaranteed, accountable pickup logistics for outbound deliveries?'?",
         "options": [
-          "Fragmented systems and lack of automated escrow and verification",
+          "Fragmented systems and lack of automated verification create severe transaction friction",
           "Excessive global hardware shipping taxes",
           "Slower consumer smartphone internet speeds",
           "Lack of available social media advertising channels"
         ],
         "correctIndex": 0,
-        "explanation": "Fragmented workflows and lack of automated verification create severe transaction friction and trust deficit.",
+        "explanation": "Fragmented systems and lack of automated verification create severe transaction friction and trust deficit.",
         "xp": 10
       },
       {
@@ -367,7 +367,7 @@
           "Relying entirely on one-time referral bonuses"
         ],
         "correctIndex": 1,
-        "explanation": "Scaling without positive transaction-level unit economics rapidly consumes capital and leads to failure.",
+        "explanation": "Achieving positive gross margin and unit economics on individual transactions is essential; scaling without it rapidly consumes capital.",
         "xp": 10
       },
       {
@@ -375,13 +375,13 @@
         "questionNumber": "03",
         "question": "How does implementing real-time transparent tracking impact user behavior?",
         "options": [
-          "It increases trust and retention by reducing operational uncertainty",
+          "Real-time visibility reduces user anxiety and strengthens platform trust and engagement",
           "It forces customers to abandon mobile applications",
           "It increases customer churn by 50%",
           "It mandates daily manual phone calls"
         ],
         "correctIndex": 0,
-        "explanation": "Real-time visibility reduces user anxiety and strengthens platform trust and engagement.",
+        "explanation": "Real-time visibility reduces user anxiety and strengthens platform trust and engagement by eliminating operational uncertainty.",
         "xp": 10
       },
       {
@@ -395,7 +395,7 @@
           "Single-channel marketing is always optimal"
         ],
         "correctIndex": 1,
-        "explanation": "Validating retention and product-market fit is necessary before spending heavily on acquisition.",
+        "explanation": "Customer retention and core value proposition must be validated before blitzscaling; marketing spend cannot overcome broken unit economics.",
         "xp": 10
       },
       {
@@ -409,7 +409,7 @@
           "Manual cash-on-delivery logging"
         ],
         "correctIndex": 0,
-        "explanation": "Automated escrows release funds conditionally only when pre-defined milestone criteria are verified.",
+        "explanation": "Automated escrow smart contracts and webhook triggers ensure secure, conditional release of funds upon verified milestone delivery.",
         "xp": 10
       }
     ]
@@ -473,13 +473,13 @@
         "questionNumber": "01",
         "question": "What is the primary operational bottleneck identified in 'Why do factory owners wait days for industrial repair technicians?'?",
         "options": [
-          "Fragmented systems and lack of automated escrow and verification",
+          "Fragmented systems and lack of automated verification create severe transaction friction",
           "Excessive global hardware shipping taxes",
           "Slower consumer smartphone internet speeds",
           "Lack of available social media advertising channels"
         ],
         "correctIndex": 0,
-        "explanation": "Fragmented workflows and lack of automated verification create severe transaction friction and trust deficit.",
+        "explanation": "Fragmented systems and lack of automated verification create severe transaction friction and trust deficit.",
         "xp": 10
       },
       {
@@ -493,7 +493,7 @@
           "Relying entirely on one-time referral bonuses"
         ],
         "correctIndex": 1,
-        "explanation": "Scaling without positive transaction-level unit economics rapidly consumes capital and leads to failure.",
+        "explanation": "Achieving positive gross margin and unit economics on individual transactions is essential; scaling without it rapidly consumes capital.",
         "xp": 10
       },
       {
@@ -501,13 +501,13 @@
         "questionNumber": "03",
         "question": "How does implementing real-time transparent tracking impact user behavior?",
         "options": [
-          "It increases trust and retention by reducing operational uncertainty",
+          "Real-time visibility reduces user anxiety and strengthens platform trust and engagement",
           "It forces customers to abandon mobile applications",
           "It increases customer churn by 50%",
           "It mandates daily manual phone calls"
         ],
         "correctIndex": 0,
-        "explanation": "Real-time visibility reduces user anxiety and strengthens platform trust and engagement.",
+        "explanation": "Real-time visibility reduces user anxiety and strengthens platform trust and engagement by eliminating operational uncertainty.",
         "xp": 10
       },
       {
@@ -521,7 +521,7 @@
           "Single-channel marketing is always optimal"
         ],
         "correctIndex": 1,
-        "explanation": "Validating retention and product-market fit is necessary before spending heavily on acquisition.",
+        "explanation": "Customer retention and core value proposition must be validated before blitzscaling; marketing spend cannot overcome broken unit economics.",
         "xp": 10
       },
       {
@@ -535,7 +535,7 @@
           "Manual cash-on-delivery logging"
         ],
         "correctIndex": 0,
-        "explanation": "Automated escrows release funds conditionally only when pre-defined milestone criteria are verified.",
+        "explanation": "Automated escrow smart contracts and webhook triggers ensure secure, conditional release of funds upon verified milestone delivery.",
         "xp": 10
       }
     ]

@@ -7,6 +7,8 @@ import { CheckCircle2, ArrowRight, Mail, ExternalLink, AlertCircle, Edit2, Check
 import OTPInput from "./OTPInput";
 import ResendTimer from "./ResendTimer";
 
+import { getOnboardingProfile, syncUserOnboardingWithBackend } from "@/lib/onboardingStore";
+
 export function VerifyEmailContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -87,7 +89,9 @@ export function VerifyEmailContent() {
           localStorage.setItem("user_verified", "true");
           localStorage.setItem("user_email", targetEmail);
         }
-        const finalDest = "/philosophy";
+        const hasCompletedOnboarding = await syncUserOnboardingWithBackend(targetEmail);
+        const prof = getOnboardingProfile();
+        const finalDest = (hasCompletedOnboarding || prof.onboardingCompleted) ? "/dashboard" : "/philosophy";
         setTimeout(() => {
           if (typeof window !== "undefined") {
             window.location.href = finalDest;
@@ -206,7 +210,9 @@ export function VerifyEmailContent() {
           localStorage.setItem("user_verified", "true");
           localStorage.setItem("user_email", email);
         }
-        const destination = "/philosophy";
+        const hasCompletedOnboarding = await syncUserOnboardingWithBackend(email);
+        const prof = getOnboardingProfile();
+        const destination = (hasCompletedOnboarding || prof.onboardingCompleted) ? "/dashboard" : "/philosophy";
         setTimeout(() => {
           if (typeof window !== "undefined") {
             window.location.href = destination;

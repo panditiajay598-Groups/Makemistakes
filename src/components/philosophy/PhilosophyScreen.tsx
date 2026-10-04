@@ -21,8 +21,24 @@ import {
 } from "lucide-react";
 import { motion } from "framer-motion";
 
+import { getOnboardingProfile, syncUserOnboardingWithBackend } from "@/lib/onboardingStore";
+
 export default function PhilosophyScreen() {
   const router = useRouter();
+
+  React.useEffect(() => {
+    const checkOnboarding = async () => {
+      const email = typeof window !== "undefined" ? localStorage.getItem("user_email") : null;
+      if (email) {
+        const isDone = await syncUserOnboardingWithBackend(email);
+        const prof = getOnboardingProfile();
+        if (isDone || prof?.onboardingCompleted) {
+          router.push("/dashboard");
+        }
+      }
+    };
+    checkOnboarding();
+  }, [router]);
 
   const projectTraits = [
     "Ends immediately after submission",
@@ -53,11 +69,18 @@ export default function PhilosophyScreen() {
     { title: "Ship Product", desc: "Deploy to production", icon: Rocket },
   ];
 
-  const handleContinue = () => {
+  const handleContinue = async () => {
     if (typeof window !== "undefined") {
       localStorage.setItem("philosophy_viewed", "true");
     }
-    router.push("/onboarding");
+    const email = typeof window !== "undefined" ? localStorage.getItem("user_email") : null;
+    const isDone = email ? await syncUserOnboardingWithBackend(email) : false;
+    const prof = getOnboardingProfile();
+    if (isDone || prof?.onboardingCompleted) {
+      router.push("/dashboard");
+    } else {
+      router.push("/onboarding");
+    }
   };
 
   return (

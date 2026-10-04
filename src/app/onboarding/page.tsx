@@ -14,6 +14,7 @@ import {
   saveOnboardingProfile,
   getOnboardingProfile,
   resetOnboardingForNewUser,
+  syncUserOnboardingWithBackend,
   UserOnboardingProfile,
 } from "@/lib/onboardingStore";
 import { DeveloperIdentityResponses } from "@/components/onboarding/DeveloperIdentityFlow";
@@ -59,9 +60,24 @@ export default function OnboardingPage() {
     // If onboarding is already fully complete, redirect to dashboard
     if (activeProf?.onboardingCompleted) {
       router.push("/dashboard");
-    } else if (activeProf?.onboardingStep && activeProf.onboardingStep >= 1 && activeProf.onboardingStep <= 5) {
-      setCurrentStage(activeProf.onboardingStep);
+      return;
     }
+
+    // Check backend sync for returning user session
+    const syncStatus = async () => {
+      const email = typeof window !== "undefined" ? localStorage.getItem("user_email") : null;
+      if (email) {
+        const isCompleted = await syncUserOnboardingWithBackend(email);
+        if (isCompleted) {
+          router.push("/dashboard");
+          return;
+        }
+      }
+      if (activeProf?.onboardingStep && activeProf.onboardingStep >= 1 && activeProf.onboardingStep <= 5) {
+        setCurrentStage(activeProf.onboardingStep);
+      }
+    };
+    syncStatus();
   }, [router]);
 
   // Listen for browser Back/Forward navigation (popstate)

@@ -146,22 +146,46 @@ export function getOnboardingProfile(): UserOnboardingProfile {
   }
 
   try {
-    const data = localStorage.getItem(STORAGE_KEY);
-    if (data) {
-      const parsed = JSON.parse(data);
-      return {
-        ...DEFAULT_PROFILE,
-        ...parsed,
-        assessmentScores: {
-          ...DEFAULT_PROFILE.assessmentScores,
-          ...(parsed.assessmentScores || {}),
-        },
-        dailyStandup: {
-          ...DEFAULT_PROFILE.dailyStandup,
-          ...(parsed.dailyStandup || {}),
-        },
-      };
+    const email = localStorage.getItem("user_email")?.trim().toLowerCase();
+    let emailData: any = null;
+    let isEmailCompleted = false;
+
+    if (email) {
+      const emailStorageKey = `${STORAGE_KEY}_${email}`;
+      const rawEmailData = localStorage.getItem(emailStorageKey);
+      if (rawEmailData) {
+        emailData = JSON.parse(rawEmailData);
+      }
+      if (localStorage.getItem(`user_onboarding_completed_${email}`) === "true") {
+        isEmailCompleted = true;
+      }
     }
+
+    const globalDataRaw = localStorage.getItem(STORAGE_KEY);
+    const globalData = globalDataRaw ? JSON.parse(globalDataRaw) : {};
+
+    const merged = {
+      ...DEFAULT_PROFILE,
+      ...globalData,
+      ...(emailData || {}),
+    };
+
+    if (isEmailCompleted || emailData?.onboardingCompleted) {
+      merged.onboardingCompleted = true;
+      merged.foundingJourneyCompleted = true;
+    }
+
+    return {
+      ...merged,
+      assessmentScores: {
+        ...DEFAULT_PROFILE.assessmentScores,
+        ...(merged.assessmentScores || {}),
+      },
+      dailyStandup: {
+        ...DEFAULT_PROFILE.dailyStandup,
+        ...(merged.dailyStandup || {}),
+      },
+    };
   } catch (e) {
     console.warn("Could not read onboarding profile from localStorage", e);
   }
@@ -195,12 +219,50 @@ export function saveOnboardingProfile(profile: Partial<UserOnboardingProfile>): 
   if (typeof window !== "undefined") {
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
+      const email = localStorage.getItem("user_email")?.trim().toLowerCase();
+      if (email) {
+        localStorage.setItem(`${STORAGE_KEY}_${email}`, JSON.stringify(updated));
+        if (updated.onboardingCompleted) {
+          localStorage.setItem(`user_onboarding_completed_${email}`, "true");
+        }
+      }
     } catch (e) {
       console.warn("Failed to write onboarding profile to localStorage", e);
     }
   }
 
   return updated;
+}
+
+export async function syncUserOnboardingWithBackend(userEmail?: string): Promise<boolean> {
+  if (typeof window === "undefined") return false;
+  const email = userEmail || localStorage.getItem("user_email");
+  if (!email) return false;
+
+  const cleanEmail = email.trim().toLowerCase();
+
+  // Check local per-user cache first
+  if (localStorage.getItem(`user_onboarding_completed_${cleanEmail}`) === "true") {
+    saveOnboardingProfile({ onboardingCompleted: true, foundingJourneyCompleted: true });
+    return true;
+  }
+
+  try {
+    const res = await fetch(`/api/journey/active?userId=${encodeURIComponent(cleanEmail)}`);
+    if (res.ok) {
+      const data = await res.json();
+      // If user has an active/unfinished problem OR completed any problem in DB
+      if (data.problemId || data.isUnfinished || data.status === "in_progress") {
+        saveOnboardingProfile({ onboardingCompleted: true, foundingJourneyCompleted: true });
+        localStorage.setItem(`user_onboarding_completed_${cleanEmail}`, "true");
+        return true;
+      }
+    }
+  } catch (e) {
+    console.warn("Error syncing user onboarding status:", e);
+  }
+
+  return false;
 }
 
 export function completeOnboardingSteps(profile: Partial<UserOnboardingProfile>): UserOnboardingProfile {
@@ -253,7 +315,12 @@ export function completeMissionZero(
 export function resetOnboardingForNewUser(): UserOnboardingProfile {
   if (typeof window !== "undefined") {
     try {
+      const email = localStorage.getItem("user_email")?.trim().toLowerCase();
       localStorage.setItem(STORAGE_KEY, JSON.stringify(DEFAULT_PROFILE));
+      if (email) {
+        localStorage.removeItem(`user_onboarding_completed_${email}`);
+        localStorage.removeItem(`${STORAGE_KEY}_${email}`);
+      }
       localStorage.removeItem("makemistakes_active_mission_session");
     } catch (e) {
       console.warn("Failed to reset onboarding profile in localStorage", e);
@@ -262,3 +329,4 @@ export function resetOnboardingForNewUser(): UserOnboardingProfile {
 
   return DEFAULT_PROFILE;
 }
+
