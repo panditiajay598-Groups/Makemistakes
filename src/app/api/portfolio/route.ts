@@ -1,48 +1,114 @@
 import { NextResponse } from "next/server";
-import { MongoClient } from "mongodb";
-import dns from "dns";
-
-try {
-  dns.setServers(["8.8.8.8", "8.8.4.4", "1.1.1.1"]);
-} catch (e) {}
-
-const DATABASE_URL = process.env.DATABASE_URL;
+import { getDb } from "@/lib/mongodb";
+import { getAuthSession } from "@/lib/authSession";
+import { sortProblemsNumerically } from "@/lib/problemId";
+import { applyNoStoreHeaders } from "@/lib/cacheHeaders";
 
 export async function GET(req: Request) {
-  let client: MongoClient | null = null;
   try {
-    const { searchParams } = new URL(req.url);
-    const userId = (searchParams.get("userId") || "default_user")
-      .toString()
-      .trim()
-      .toLowerCase();
-
-    if (!DATABASE_URL) {
-      return NextResponse.json(
-        { error: "DATABASE_URL is not configured" },
-        { status: 500 }
+    if (!process.env.DATABASE_URL) {
+      return applyNoStoreHeaders(
+        NextResponse.json(
+          { error: "DATABASE_URL is not configured" },
+          { status: 500 }
+        )
       );
     }
 
-    client = new MongoClient(DATABASE_URL);
-    await client.connect();
-    const db = client.db();
+    // 1. Derive authoritative user identity exclusively from verified server-side session.
+    // Client-supplied ?userId query parameters are strictly ignored for authorization.
+    const session = await getAuthSession(req);
 
+    const authIdentifiers: string[] = [];
+    if (session?.email && session.email.trim()) {
+      authIdentifiers.push(session.email.trim().toLowerCase());
+    }
+    if (session?.userId && session.userId.trim() && !authIdentifiers.includes(session.userId.trim())) {
+      authIdentifiers.push(session.userId.trim());
+    }
+
+    const hasAuthSession = authIdentifiers.length > 0;
+
+    // Anonymous visitors receive safe empty zero-state without querying private user records
+    if (!hasAuthSession) {
+      return applyNoStoreHeaders(
+        NextResponse.json({
+          success: true,
+          authenticated: false,
+          userId: null,
+        projects: [],
+        summary: {
+          projectsBuilt: 0,
+          totalProjects: 0,
+          phasesCompleted: 0,
+          portfolioProgress: 0,
+          achievements: [
+            {
+              id: "first_product",
+              title: "First Product Completed",
+              description: "Successfully shipped your first end-to-end product challenge.",
+              unlocked: false,
+            },
+            {
+              id: "github_push",
+              title: "GitHub Push Completed",
+              description: "Pushed production code repository to GitHub.",
+              unlocked: false,
+            },
+            {
+              id: "full_journey",
+              title: "8 Phases Completed",
+              description: "Completed all 8 phases of the MakeMistakes Product Journey.",
+              unlocked: false,
+            },
+            {
+              id: "builder_started",
+              title: "Journey Started",
+              description: "Initiated your product engineering journey on MakeMistakes OS.",
+              unlocked: false,
+            },
+          ],
+          skills: [],
+        },
+      })
+    );
+  }
+
+    const userFilter = authIdentifiers.length === 1
+      ? { userId: authIdentifiers[0] }
+      : { userId: { $in: authIdentifiers } };
+
+    const db = await getDb();
     const problemsCollection = db.collection("problems");
     const completionsCollection = db.collection("problem_completions");
     const userJourneysCollection = db.collection("user_journeys");
 
-    // 1. Fetch completions for THIS user
-    const completionDocs = await completionsCollection
-      .find({ userId })
-      .toArray();
+    // 2. Fetch completions and journeys in parallel with bounded projections
+    const [completionDocs, userJourneys] = await Promise.all([
+      completionsCollection
+        .find(userFilter, { projection: { problemId: 1, completedAt: 1 } })
+        .toArray(),
+      userJourneysCollection
+        .find(userFilter, {
+          projection: {
+            problemId: 1,
+            status: 1,
+            currentPhase: 1,
+            "phases.plan.techDecisions": 1,
+            "phases.deploy": 1,
+            updatedAt: 1,
+            lastActivityAt: 1,
+            lastSavedAt: 1,
+          },
+        })
+        .toArray(),
+    ]);
+
     const completionsMap = new Map<string, any>();
     completionDocs.forEach((doc: any) => {
       if (doc.problemId) completionsMap.set(doc.problemId, doc);
     });
 
-    // 2. Fetch user journeys for THIS user
-    const userJourneys = await userJourneysCollection.find({ userId }).toArray();
     const journeysMap = new Map<string, any>();
     userJourneys.forEach((doc: any) => {
       if (doc.problemId) journeysMap.set(doc.problemId, doc);
@@ -53,23 +119,74 @@ export async function GET(req: Request) {
       new Set([...completionsMap.keys(), ...journeysMap.keys()])
     );
 
-    // Fetch master problem definitions for user's problem IDs
-    let problemDocs: any[] = [];
-    if (userProblemIds.length > 0) {
-      problemDocs = await problemsCollection
-        .find({ problemId: { $in: userProblemIds } })
-        .toArray();
+    // If user has not started any problem, return early without touching problems collection
+    if (userProblemIds.length === 0) {
+      return NextResponse.json({
+        success: true,
+        authenticated: true,
+        userId: authIdentifiers[0],
+        projects: [],
+        summary: {
+          projectsBuilt: 0,
+          totalProjects: 0,
+          phasesCompleted: 0,
+          portfolioProgress: 0,
+          achievements: [
+            {
+              id: "first_product",
+              title: "First Product Completed",
+              description: "Successfully shipped your first end-to-end product challenge.",
+              unlocked: false,
+            },
+            {
+              id: "github_push",
+              title: "GitHub Push Completed",
+              description: "Pushed production code repository to GitHub.",
+              unlocked: false,
+            },
+            {
+              id: "full_journey",
+              title: "8 Phases Completed",
+              description: "Completed all 8 phases of the MakeMistakes Product Journey.",
+              unlocked: false,
+            },
+            {
+              id: "builder_started",
+              title: "Journey Started",
+              description: "Initiated your product engineering journey on MakeMistakes OS.",
+              unlocked: false,
+            },
+          ],
+          skills: [],
+        },
+      });
     }
+
+    // 3. Fetch ONLY the specific problems this user has worked on with bounded projection.
+    // Eliminates the previous redundant 1,848-document full collection scan.
+    const problemDocs = await problemsCollection
+      .find(
+        { problemId: { $in: userProblemIds } },
+        {
+          projection: {
+            problemId: 1,
+            title: 1,
+            category: 1,
+            difficulty: 1,
+            "learning.level": 1,
+            problemDescription: 1,
+            description: 1,
+            context: 1,
+            "build.techStack": 1,
+          },
+        }
+      )
+      .toArray();
 
     const problemsMap = new Map<string, any>();
     problemDocs.forEach((p: any) => {
       if (p.problemId) problemsMap.set(p.problemId, p);
     });
-
-    // Also fetch all problems list for fallback lookups
-    const allProblems = await problemsCollection
-      .find({}, { projection: { problemId: 1, title: 1, category: 1, difficulty: 1, problemDescription: 1, description: 1 } })
-      .toArray();
 
     // Map each project for this user
     const projects: any[] = [];
@@ -77,7 +194,7 @@ export async function GET(req: Request) {
     userProblemIds.forEach((pid) => {
       const journey = journeysMap.get(pid);
       const completion = completionsMap.get(pid);
-      const problem = problemsMap.get(pid) || allProblems.find((p) => p.problemId === pid);
+      const problem = problemsMap.get(pid);
 
       const isCompleted =
         !!completion ||
@@ -153,11 +270,7 @@ export async function GET(req: Request) {
     });
 
     // Sort projects numerically by problemId (P000001, P000002, etc.)
-    projects.sort((a, b) => {
-      const numA = parseInt((a.problemId || "").replace(/\D/g, ""), 10) || 0;
-      const numB = parseInt((b.problemId || "").replace(/\D/g, ""), 10) || 0;
-      return numA - numB;
-    });
+    sortProblemsNumerically(projects);
 
     // Calculate Summary Metrics
     const projectsBuilt = projects.filter((p) => p.status === "Completed").length;
@@ -205,27 +318,29 @@ export async function GET(req: Request) {
       new Set(projects.flatMap((p) => p.techStack || []))
     );
 
-    await client.close();
-
-    return NextResponse.json({
-      success: true,
-      userId,
-      projects,
-      summary: {
-        projectsBuilt,
-        totalProjects: projects.length,
-        phasesCompleted: totalPhasesDone,
-        portfolioProgress: overallPct,
-        achievements,
-        skills: allSkills,
-      },
-    });
+    return applyNoStoreHeaders(
+      NextResponse.json({
+        success: true,
+        authenticated: true,
+        userId: authIdentifiers[0],
+        projects,
+        summary: {
+          projectsBuilt,
+          totalProjects: projects.length,
+          phasesCompleted: totalPhasesDone,
+          portfolioProgress: overallPct,
+          achievements,
+          skills: allSkills,
+        },
+      })
+    );
   } catch (err: any) {
-    if (client) await client.close().catch(() => {});
     console.error("Error in GET /api/portfolio:", err);
-    return NextResponse.json(
-      { error: err.message || "Failed to load portfolio data" },
-      { status: 500 }
+    return applyNoStoreHeaders(
+      NextResponse.json(
+        { error: err.message || "Failed to load portfolio data" },
+        { status: 500 }
+      )
     );
   }
 }

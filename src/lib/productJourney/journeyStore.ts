@@ -13,6 +13,11 @@ import {
   MissionRef,
 } from "./types";
 import { PHASE_ORDER, getNextPhaseId } from "./phases";
+import {
+  getCachedParsedItem,
+  setCachedParsedItem,
+  removeCachedItem,
+} from "../storageCache";
 
 const KEY_PREFIX = "makemistakes_journey_";
 
@@ -25,8 +30,7 @@ function storageKey(productId: string): string {
 export function getJourneyProgress(productId: string): JourneyProgress | null {
   if (typeof window === "undefined") return null;
   try {
-    const raw = localStorage.getItem(storageKey(productId));
-    return raw ? (JSON.parse(raw) as JourneyProgress) : null;
+    return getCachedParsedItem<JourneyProgress | null>(storageKey(productId), null);
   } catch {
     return null;
   }
@@ -51,7 +55,7 @@ export function clearProblemJourneyData(problemId: string): void {
       `makemistakes_deploy_v2_data_`,
       `makemistakes_improve_v2_data_`,
     ];
-    keys.forEach((k) => localStorage.removeItem(k));
+    keys.forEach((k) => removeCachedItem(k));
   } catch (e) {
     console.warn("[journeyStore] Failed to clear problem journey data:", e);
   }
@@ -60,7 +64,7 @@ export function clearProblemJourneyData(problemId: string): void {
 export function saveJourneyProgress(progress: JourneyProgress): void {
   if (typeof window === "undefined") return;
   try {
-    localStorage.setItem(storageKey(progress.productId), JSON.stringify(progress));
+    setCachedParsedItem(storageKey(progress.productId), progress);
   } catch (e) {
     console.warn("[journeyStore] Failed to persist progress:", e);
   }

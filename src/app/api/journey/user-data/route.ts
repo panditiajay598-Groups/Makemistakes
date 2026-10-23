@@ -1,38 +1,17 @@
 import { NextResponse } from "next/server";
-import { MongoClient } from "mongodb";
-import dns from "dns";
-
-try {
-  dns.setServers(["8.8.8.8", "8.8.4.4", "1.1.1.1"]);
-} catch (e) {}
-
-const DATABASE_URL = process.env.DATABASE_URL;
+import { getDb } from "@/lib/mongodb";
+import { applyNoStoreHeaders } from "@/lib/cacheHeaders";
+import { getAuthSession } from "@/lib/authSession";
 
 const COLLECTION_NAME = "user_journeys";
-let indexEnsured = false;
-
 async function getCollection() {
-  if (!DATABASE_URL) {
+  if (!process.env.DATABASE_URL) {
     throw new Error("DATABASE_URL is not configured");
   }
-  const client = new MongoClient(DATABASE_URL);
-  await client.connect();
-  const db = client.db();
+  const db = await getDb();
   const collection = db.collection(COLLECTION_NAME);
 
-  if (!indexEnsured) {
-    try {
-      await collection.createIndex(
-        { userId: 1, problemId: 1 },
-        { unique: true, background: true }
-      );
-      indexEnsured = true;
-    } catch (idxErr) {
-      console.warn("[user_journeys] Index creation warning:", idxErr);
-    }
-  }
-
-  return { client, collection };
+  return { collection };
 }
 
 /** Default empty structure for all 8 journey phases */
@@ -135,33 +114,56 @@ export function computeMaxAllowedPhase(phases: any, currentPhase?: number | null
   return Math.max(1, Math.min(8, maxAllowed));
 }
 
-/** GET — Load user's journey data strictly scoped by userId + problemId */
+/** GET — Load user's journey data strictly scoped by verified session + problemId */
 export async function GET(req: Request) {
-  let client: MongoClient | null = null;
   try {
+    const session = await getAuthSession(req);
+    if (!session) {
+      return applyNoStoreHeaders(
+        NextResponse.json(
+          { error: "Unauthorized. Authentication session required." },
+          { status: 401 }
+        )
+      );
+    }
+
     const { searchParams } = new URL(req.url);
-    const userId = (searchParams.get("userId") || "default_user").toString().trim().toLowerCase();
     const problemId = (searchParams.get("problemId") || "").toString().trim();
 
     if (!problemId) {
-      return NextResponse.json({ error: "Missing required 'problemId' parameter" }, { status: 400 });
+      return applyNoStoreHeaders(
+        NextResponse.json({ error: "Missing required 'problemId' parameter" }, { status: 400 })
+      );
     }
 
+    const authIdentifiers: string[] = [];
+    if (session.email?.trim()) {
+      authIdentifiers.push(session.email.trim().toLowerCase());
+    }
+    if (session.userId?.trim() && !authIdentifiers.includes(session.userId.trim())) {
+      authIdentifiers.push(session.userId.trim());
+    }
+
+    const primaryUserId = authIdentifiers[0] || session.userId;
+    const userQuery = authIdentifiers.length === 1
+      ? { userId: authIdentifiers[0] }
+      : { userId: { $in: authIdentifiers } };
+
     const res = await getCollection();
-    client = res.client;
-    const journey = await res.collection.findOne({ userId, problemId });
-    await client.close();
+    const journey = await res.collection.findOne({ ...userQuery, problemId });
 
     if (!journey) {
-      return NextResponse.json({
-        exists: false,
-        userId,
-        problemId,
-        currentPhase: 1,
-        maxAllowedPhase: 1,
-        status: "in_progress",
-        phases: DEFAULT_PHASES,
-      });
+      return applyNoStoreHeaders(
+        NextResponse.json({
+          exists: false,
+          userId: primaryUserId,
+          problemId,
+          currentPhase: 1,
+          maxAllowedPhase: 1,
+          status: "in_progress",
+          phases: DEFAULT_PHASES,
+        })
+      );
     }
 
     const mergedPhases = {
@@ -173,31 +175,55 @@ export async function GET(req: Request) {
     const rawPhase = typeof journey.currentPhase === "number" && journey.currentPhase >= 1 ? journey.currentPhase : 1;
     const safeCurrentPhase = Math.min(rawPhase, maxAllowedPhase);
 
-    return NextResponse.json({
-      exists: true,
-      userId: journey.userId,
-      problemId: journey.problemId,
-      currentPhase: safeCurrentPhase,
-      maxAllowedPhase,
-      status: journey.status || "in_progress",
-      phases: mergedPhases,
-      lastSavedAt: journey.lastSavedAt || journey.updatedAt,
-      lastActivityAt: journey.lastActivityAt || journey.updatedAt,
-      updatedAt: journey.updatedAt,
-    });
+    return applyNoStoreHeaders(
+      NextResponse.json({
+        exists: true,
+        userId: journey.userId || primaryUserId,
+        problemId: journey.problemId,
+        currentPhase: safeCurrentPhase,
+        maxAllowedPhase,
+        status: journey.status || "in_progress",
+        phases: mergedPhases,
+        lastSavedAt: journey.lastSavedAt || journey.updatedAt,
+        lastActivityAt: journey.lastActivityAt || journey.updatedAt,
+        updatedAt: journey.updatedAt,
+      })
+    );
   } catch (err: any) {
-    if (client) await client.close().catch(() => {});
     console.error("Error in GET /api/journey/user-data:", err);
-    return NextResponse.json({ error: err.message || "Failed to load journey data" }, { status: 500 });
+    return applyNoStoreHeaders(
+      NextResponse.json({ error: err.message || "Failed to load journey data" }, { status: 500 })
+    );
   }
 }
 
-/** POST — Save/upsert phase-specific data strictly scoped by userId + problemId */
+/** POST — Save/upsert phase-specific data strictly scoped by verified session + problemId */
 export async function POST(req: Request) {
-  let client: MongoClient | null = null;
   try {
+    const session = await getAuthSession(req);
+    if (!session) {
+      return applyNoStoreHeaders(
+        NextResponse.json(
+          { error: "Unauthorized. Authentication session required." },
+          { status: 401 }
+        )
+      );
+    }
+
+    const authIdentifiers: string[] = [];
+    if (session.email?.trim()) {
+      authIdentifiers.push(session.email.trim().toLowerCase());
+    }
+    if (session.userId?.trim() && !authIdentifiers.includes(session.userId.trim())) {
+      authIdentifiers.push(session.userId.trim());
+    }
+
+    const primaryUserId = authIdentifiers[0] || session.userId;
+    const userQuery = authIdentifiers.length === 1
+      ? { userId: authIdentifiers[0] }
+      : { userId: { $in: authIdentifiers } };
+
     const body = await req.json().catch(() => ({}));
-    const userId = (body.userId || "default_user").toString().trim().toLowerCase();
     const problemId = (body.problemId || "").toString().trim();
     const phase = (body.phase || "").toString().trim().toLowerCase();
     const currentPhase = typeof body.currentPhase === "number" ? body.currentPhase : (body.currentPhase ? parseInt(body.currentPhase, 10) : null);
@@ -205,18 +231,21 @@ export async function POST(req: Request) {
     const customStatus = body.status;
 
     if (!problemId) {
-      return NextResponse.json(
-        { error: "Missing required 'problemId' parameter" },
-        { status: 400 }
+      return applyNoStoreHeaders(
+        NextResponse.json(
+          { error: "Missing required 'problemId' parameter" },
+          { status: 400 }
+        )
       );
     }
 
     const res = await getCollection();
-    client = res.client;
+    const existingDoc = await res.collection.findOne({ ...userQuery, problemId });
+    const targetUserId = existingDoc?.userId || primaryUserId;
 
     const now = new Date();
     const setFields: Record<string, any> = {
-      userId,
+      userId: targetUserId,
       problemId,
       lastSavedAt: now,
       lastActivityAt: now,
@@ -228,7 +257,6 @@ export async function POST(req: Request) {
     }
 
     if (currentPhase && currentPhase >= 1 && currentPhase <= 9) {
-      const existingDoc = await res.collection.findOne({ userId, problemId });
       const currentPhases = {
         ...(existingDoc?.phases || {}),
         ...(phase && data !== undefined ? { [phase]: data } : {}),
@@ -245,10 +273,34 @@ export async function POST(req: Request) {
       setFields.currentPhase = safeCurrentPhase;
     }
 
-    if (customStatus) {
-      setFields.status = customStatus;
-    } else {
-      setFields.status = "in_progress";
+    const targetStatus = customStatus || "in_progress";
+    setFields.status = targetStatus;
+
+    // Check if the requested write is completely unchanged from existingDoc
+    if (existingDoc) {
+      const isPhaseUnchanged =
+        !phase ||
+        data === undefined ||
+        JSON.stringify(existingDoc.phases?.[phase]) === JSON.stringify(data);
+      const isCurrentPhaseUnchanged =
+        !setFields.currentPhase ||
+        existingDoc.currentPhase === setFields.currentPhase;
+      const isStatusUnchanged = existingDoc.status === targetStatus;
+
+      if (isPhaseUnchanged && isCurrentPhaseUnchanged && isStatusUnchanged) {
+        return applyNoStoreHeaders(
+          NextResponse.json({
+            success: true,
+            userId: targetUserId,
+            problemId,
+            phase: phase || null,
+            currentPhase: setFields.currentPhase || existingDoc.currentPhase || 1,
+            lastSavedAt: existingDoc.lastSavedAt || existingDoc.updatedAt || now,
+            updatedAt: existingDoc.updatedAt || now,
+            skippedWrite: true,
+          })
+        );
+      }
     }
 
     const updateQuery = {
@@ -259,26 +311,27 @@ export async function POST(req: Request) {
     };
 
     const result = await res.collection.updateOne(
-      { userId, problemId },
+      { userId: targetUserId, problemId },
       updateQuery,
       { upsert: true }
     );
 
-    await client.close();
-
-    return NextResponse.json({
-      success: true,
-      userId,
-      problemId,
-      phase: phase || null,
-      currentPhase: currentPhase || null,
-      lastSavedAt: now,
-      updatedAt: now,
-      upserted: result.upsertedCount > 0,
-    });
+    return applyNoStoreHeaders(
+      NextResponse.json({
+        success: true,
+        userId: targetUserId,
+        problemId,
+        phase: phase || null,
+        currentPhase: setFields.currentPhase || currentPhase || null,
+        lastSavedAt: now,
+        updatedAt: now,
+        upserted: result.upsertedCount > 0,
+      })
+    );
   } catch (err: any) {
-    if (client) await client.close().catch(() => {});
     console.error("Error in POST /api/journey/user-data:", err);
-    return NextResponse.json({ error: err.message || "Failed to save journey data" }, { status: 500 });
+    return applyNoStoreHeaders(
+      NextResponse.json({ error: err.message || "Failed to save journey data" }, { status: 500 })
+    );
   }
 }

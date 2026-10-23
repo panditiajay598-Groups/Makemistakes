@@ -3,6 +3,7 @@
 interface CodeEntry {
   code: string;
   expiresAt: number;
+  attempts: number;
 }
 
 // Global reference to persist code store across Next.js API reloads in dev
@@ -26,7 +27,7 @@ export function normalizeEmail(email: string): string {
 export function saveCode(email: string, code: string, ttlMinutes = 10): void {
   const cleanEmail = normalizeEmail(email);
   const expiresAt = Date.now() + ttlMinutes * 60 * 1000;
-  store.set(cleanEmail, { code, expiresAt });
+  store.set(cleanEmail, { code, expiresAt, attempts: 0 });
 }
 
 /**
@@ -41,7 +42,7 @@ export function getCodeDetails(email: string): { code?: string; isExpired?: bool
 }
 
 /**
- * Validates a 6-digit verification code.
+ * Validates a 6-digit verification code with 5-attempt lockout limit.
  */
 export function verifyCode(
   email: string,
@@ -53,7 +54,7 @@ export function verifyCode(
   if (!entry) {
     return {
       valid: false,
-      reason: "No active verification code found for this email. Please request a new code.",
+      reason: "Invalid or expired verification code. Please request a new code.",
     };
   }
 
@@ -61,14 +62,31 @@ export function verifyCode(
     store.delete(cleanEmail);
     return {
       valid: false,
-      reason: "Verification code has expired (10 min limit). Please request a new code.",
+      reason: "Invalid or expired verification code. Please request a new code.",
+    };
+  }
+
+  if (entry.attempts >= 5) {
+    store.delete(cleanEmail);
+    return {
+      valid: false,
+      reason: "Maximum verification attempts exceeded. Please request a new code.",
     };
   }
 
   if (entry.code !== userSubmittedCode.trim()) {
+    entry.attempts += 1;
+    const remaining = Math.max(0, 5 - entry.attempts);
+    if (remaining === 0) {
+      store.delete(cleanEmail);
+      return {
+        valid: false,
+        reason: "Maximum verification attempts exceeded. Please request a new code.",
+      };
+    }
     return {
       valid: false,
-      reason: "Incorrect 6-digit verification code. Please check and try again.",
+      reason: `Invalid verification code. ${remaining} attempt(s) remaining.`,
     };
   }
 

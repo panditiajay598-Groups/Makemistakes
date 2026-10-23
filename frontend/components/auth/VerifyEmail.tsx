@@ -91,12 +91,13 @@ export function VerifyEmailContent() {
         }
         const hasCompletedOnboarding = await syncUserOnboardingWithBackend(targetEmail);
         const prof = getOnboardingProfile();
-        const finalDest = (hasCompletedOnboarding || prof.onboardingCompleted) ? "/dashboard" : "/philosophy";
+        const nextDest = (hasCompletedOnboarding || prof.onboardingCompleted) ? "/dashboard" : "/philosophy";
+        const planDest = `/auth/plan?email=${encodeURIComponent(targetEmail)}&returnTo=${encodeURIComponent(nextDest)}`;
         setTimeout(() => {
           if (typeof window !== "undefined") {
-            window.location.href = finalDest;
+            window.location.href = planDest;
           } else {
-            router.push(finalDest);
+            router.push(planDest);
           }
         }, 500);
       } else {
@@ -212,12 +213,13 @@ export function VerifyEmailContent() {
         }
         const hasCompletedOnboarding = await syncUserOnboardingWithBackend(email);
         const prof = getOnboardingProfile();
-        const destination = (hasCompletedOnboarding || prof.onboardingCompleted) ? "/dashboard" : "/philosophy";
+        const nextDest = (hasCompletedOnboarding || prof.onboardingCompleted) ? "/dashboard" : "/philosophy";
+        const planDest = `/auth/plan?email=${encodeURIComponent(email)}&returnTo=${encodeURIComponent(nextDest)}`;
         setTimeout(() => {
           if (typeof window !== "undefined") {
-            window.location.href = destination;
+            window.location.href = planDest;
           } else {
-            router.push(destination);
+            router.push(planDest);
           }
         }, 500);
       } else {

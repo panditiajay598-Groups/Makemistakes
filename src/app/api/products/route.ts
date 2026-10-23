@@ -1,160 +1,136 @@
 import { NextResponse } from "next/server";
-import { MongoClient } from "mongodb";
-import dns from "dns";
+import { getDb } from "@/lib/mongodb";
+import { getAuthSession } from "@/lib/authSession";
+import { evaluateUserUnlock, isProblemLocked } from "@/lib/unlockEligibility";
+import { applyNoStoreHeaders, applyPublicCatalogCacheHeaders } from "@/lib/cacheHeaders";
 
-try {
-  dns.setServers(["8.8.8.8", "8.8.4.4", "1.1.1.1"]);
-} catch (e) {}
+function escapeRegex(text: string): string {
+  return text.replace(/[-[\]{}()*+?.,\\^$|#\s]/g, "\\$&");
+}
 
-const DATABASE_URL = process.env.DATABASE_URL;
 
 export async function GET(req: Request) {
-  let client: MongoClient | null = null;
   try {
     const { searchParams } = new URL(req.url);
-    const userId = (searchParams.get("userId") || "default_user")
-      .toString()
-      .trim()
-      .toLowerCase();
-    const search = (searchParams.get("search") || "").toString().trim().toLowerCase();
+
+    // Derive authoritative user identity exclusively from verified server-side session.
+    // Client-supplied ?userId query parameters are strictly ignored for authorization.
+    const session = await getAuthSession(req);
+
+    const authIdentifiers: string[] = [];
+    if (session?.email && session.email.trim()) {
+      authIdentifiers.push(session.email.trim().toLowerCase());
+    }
+    if (session?.userId && session.userId.trim() && !authIdentifiers.includes(session.userId.trim())) {
+      authIdentifiers.push(session.userId.trim());
+    }
+
+    const hasAuthSession = authIdentifiers.length > 0;
+    const userFilter = authIdentifiers.length === 1
+      ? { userId: authIdentifiers[0] }
+      : { userId: { $in: authIdentifiers } };
+
+    const search = (searchParams.get("search") || "").toString().trim();
     const difficulty = (searchParams.get("difficulty") || "").toString().trim();
     const category = (searchParams.get("category") || "").toString().trim();
     const sort = (searchParams.get("sort") || "numerical_asc").toString().trim();
 
-    if (!DATABASE_URL) {
-      return NextResponse.json(
-        { error: "DATABASE_URL is not configured" },
-        { status: 500 }
+    // Pagination parameters with safe validation & defaults
+    const rawPage = parseInt(searchParams.get("page") || "1", 10);
+    const page = Number.isFinite(rawPage) && rawPage > 0 ? rawPage : 1;
+
+    const rawLimit = parseInt(searchParams.get("limit") || "20", 10);
+    const limit = Number.isFinite(rawLimit) && rawLimit > 0 ? Math.min(100, rawLimit) : 20;
+
+    const skip = (page - 1) * limit;
+
+    if (!process.env.DATABASE_URL) {
+      return applyNoStoreHeaders(
+        NextResponse.json(
+          { error: "DATABASE_URL is not configured" },
+          { status: 500 }
+        )
       );
     }
 
-    client = new MongoClient(DATABASE_URL);
-    await client.connect();
-    const db = client.db();
-
+    const db = await getDb();
     const problemsCollection = db.collection("problems");
     const userJourneysCollection = db.collection("user_journeys");
     const completionsCollection = db.collection("problem_completions");
 
-    // 1. Fetch user's journeys and completions for status resolution
-    const userJourneys = await userJourneysCollection.find({ userId }).toArray();
-    const completions = await completionsCollection.find({ userId }).toArray();
+    // Build MongoDB query filter matching existing search & filter semantics
+    const conditions: any[] = [];
 
-    const journeysMap = new Map<string, any>();
-    userJourneys.forEach((j: any) => {
-      if (j.problemId) journeysMap.set(j.problemId, j);
-    });
+    if (difficulty && difficulty !== "All") {
+      const diffRegex = new RegExp(`^${escapeRegex(difficulty)}$`, "i");
+      conditions.push({
+        $or: [
+          { difficulty: diffRegex },
+          { "learning.level": diffRegex },
+        ],
+      });
+    }
 
-    const completionsSet = new Set<string>();
-    completions.forEach((c: any) => {
-      if (c.problemId) completionsSet.add(c.problemId);
-    });
+    if (category && category !== "All") {
+      conditions.push({
+        category: new RegExp(`^${escapeRegex(category)}$`, "i"),
+      });
+    }
 
-    // 2. Fetch all problem statement documents from MongoDB
-    const allProblems = await problemsCollection.find({}).toArray();
+    if (search) {
+      const searchRegex = new RegExp(escapeRegex(search), "i");
+      conditions.push({
+        $or: [
+          { problemId: searchRegex },
+          { title: searchRegex },
+          { problemStatement: searchRegex },
+          { description: searchRegex },
+          { problemDescription: searchRegex },
+          { category: searchRegex },
+        ],
+      });
+    }
 
-    // Collect totals by difficulty dynamically from DB
-    let beginnerTotal = 0;
-    let intermediateTotal = 0;
-    let advancedTotal = 0;
+    const query = conditions.length === 0
+      ? {}
+      : conditions.length === 1
+      ? conditions[0]
+      : { $and: conditions };
 
-    let completedBeginner = 0;
-    let completedIntermediate = 0;
+    // Deterministic sorting with stable tie-breaker
+    let sortObj: Record<string, 1 | -1> = { problemId: 1 };
+    if (sort === "numerical_desc") {
+      sortObj = { problemId: -1 };
+    } else if (sort === "newest") {
+      sortObj = { createdAt: -1, problemId: 1 };
+    } else if (sort === "oldest") {
+      sortObj = { createdAt: 1, problemId: 1 };
+    }
 
-    const categoriesSet = new Set<string>();
-    const difficultiesSet = new Set<string>();
+    // Execute queries in parallel: unlock evaluation (using shared engine), total count, paginated slice
+    const [unlockData, totalCount, rawProblems] = await Promise.all([
+      evaluateUserUnlock(db, hasAuthSession ? userFilter : null),
+      problemsCollection.countDocuments(query),
+      problemsCollection
+        .find(query, {
+          projection: { quiz: 0, metadata: 0, pdfSource: 0 }
+        })
+        .sort(sortObj)
+        .skip(skip)
+        .limit(limit)
+        .toArray(),
+    ]);
 
-    allProblems.forEach((p: any) => {
-      if (p.category && typeof p.category === "string" && p.category.trim()) {
-        categoriesSet.add(p.category.trim());
-      }
+    const {
+      catalogMeta,
+      unlockProgress,
+      journeysMap,
+      completionsSet,
+      inProgressCount,
+    } = unlockData;
 
-      const diff = p.difficulty || p.learning?.level || "";
-      if (diff && typeof diff === "string" && diff.trim()) {
-        difficultiesSet.add(diff.trim());
-      }
-
-      const pid = p.problemId;
-      const journey = journeysMap.get(pid);
-      const isCompleted =
-        completionsSet.has(pid) ||
-        journey?.status === "completed" ||
-        (typeof journey?.currentPhase === "number" && journey.currentPhase > 8);
-
-      if (diff === "Beginner") {
-        beginnerTotal++;
-        if (isCompleted) completedBeginner++;
-      } else if (diff === "Intermediate") {
-        intermediateTotal++;
-        if (isCompleted) completedIntermediate++;
-      } else if (diff === "Advanced") {
-        advancedTotal++;
-      }
-    });
-
-    // Calculate required completions using CEIL
-    const beginnerRequired = Math.ceil(beginnerTotal * 0.50);
-    const intermediateRequired = Math.ceil(intermediateTotal * 0.30);
-    const advancedUnlocked =
-      completedBeginner >= beginnerRequired && completedIntermediate >= intermediateRequired;
-
-    // 3. Filter problem statements according to search, difficulty, category
-    let filtered = allProblems.filter((p: any) => {
-      // Search matching (problemId, title, problemStatement, description, category)
-      if (search) {
-        const pid = (p.problemId || "").toLowerCase();
-        const title = (p.title || "").toLowerCase();
-        const stmt = (p.problemStatement || "").toLowerCase();
-        const desc = (p.description || p.problemDescription || "").toLowerCase();
-        const cat = (p.category || "").toLowerCase();
-
-        const matchesSearch =
-          pid.includes(search) ||
-          title.includes(search) ||
-          stmt.includes(search) ||
-          desc.includes(search) ||
-          cat.includes(search);
-
-        if (!matchesSearch) return false;
-      }
-
-      // Difficulty matching
-      if (difficulty && difficulty !== "All") {
-        const pDiff = (p.difficulty || p.learning?.level || "").toLowerCase();
-        if (pDiff !== difficulty.toLowerCase()) return false;
-      }
-
-      // Category matching
-      if (category && category !== "All") {
-        const pCat = (p.category || "").toLowerCase();
-        if (pCat !== category.toLowerCase()) return false;
-      }
-
-      return true;
-    });
-
-    // 4. Sort results
-    filtered.sort((a: any, b: any) => {
-      const numA = parseInt((a.problemId || "").replace(/\D/g, ""), 10) || 0;
-      const numB = parseInt((b.problemId || "").replace(/\D/g, ""), 10) || 0;
-
-      if (sort === "numerical_desc") {
-        return numB - numA;
-      } else if (sort === "newest") {
-        const dateA = new Date(a.createdAt || 0).getTime();
-        const dateB = new Date(b.createdAt || 0).getTime();
-        return dateB - dateA;
-      } else if (sort === "oldest") {
-        const dateA = new Date(a.createdAt || 0).getTime();
-        const dateB = new Date(b.createdAt || 0).getTime();
-        return dateA - dateB;
-      }
-      // Default: numerical_asc (P000001, P000002...)
-      return numA - numB;
-    });
-
-    // 5. Map documents into product catalog objects with user-specific journey status & unlock lock
-    const products = filtered.map((p: any) => {
+    // Map raw problems to product catalog format
+    const products = rawProblems.map((p: any) => {
       const pid = p.problemId;
       const journey = journeysMap.get(pid);
       const isCompleted =
@@ -177,9 +153,11 @@ export async function GET(req: Request) {
       }
 
       const pDiff = p.difficulty || p.learning?.level || null;
-
-      // Advanced problem lock rule: locked if advancedUnlocked is false AND user has not started it
-      const isLocked = pDiff === "Advanced" && !advancedUnlocked && userStatus === "not_started";
+      const isLocked = isProblemLocked({
+        difficulty: pDiff,
+        advancedUnlocked: unlockProgress.advancedUnlocked,
+        userStatus,
+      });
 
       return {
         problemId: pid,
@@ -205,31 +183,37 @@ export async function GET(req: Request) {
       };
     });
 
-    await client.close();
+    const totalPages = Math.ceil(totalCount / limit) || 1;
+    const hasMore = page < totalPages;
 
-    return NextResponse.json({
+    const response = NextResponse.json({
       success: true,
-      totalCount: products.length,
+      authenticated: hasAuthSession,
+      totalCount,
+      page,
+      limit,
+      totalPages,
+      hasMore,
       products,
-      categories: Array.from(categoriesSet).sort(),
-      difficulties: Array.from(difficultiesSet).sort(),
-      unlockProgress: {
-        completedBeginner,
-        beginnerTotal,
-        beginnerRequired,
-        completedIntermediate,
-        intermediateTotal,
-        intermediateRequired,
-        advancedTotal,
-        advancedUnlocked,
+      categories: catalogMeta.categories,
+      difficulties: catalogMeta.difficulties,
+      unlockProgress,
+      userMetrics: {
+        inProgressCount,
+        completedCount: completionsSet.size,
       },
     });
+
+    return hasAuthSession
+      ? applyNoStoreHeaders(response)
+      : applyPublicCatalogCacheHeaders(response);
   } catch (err: any) {
-    if (client) await client.close().catch(() => {});
     console.error("Error in GET /api/products:", err);
-    return NextResponse.json(
-      { error: err.message || "Failed to load product catalog" },
-      { status: 500 }
+    return applyNoStoreHeaders(
+      NextResponse.json(
+        { error: err.message || "Failed to load product catalog" },
+        { status: 500 }
+      )
     );
   }
 }

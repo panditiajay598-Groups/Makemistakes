@@ -1,21 +1,7 @@
 import { NextResponse } from "next/server";
-import { MongoClient } from "mongodb";
-import dns from "dns";
-
-try { dns.setServers(["8.8.8.8", "8.8.4.4", "1.1.1.1"]); } catch {}
+import { getDb } from "@/lib/mongodb";
 
 export const runtime = "nodejs";
-
-let cachedClient: MongoClient | null = null;
-async function getDb() {
-  const url = process.env.DATABASE_URL;
-  if (!url) throw new Error("DATABASE_URL not set");
-  if (!cachedClient) {
-    cachedClient = new MongoClient(url);
-    await cachedClient.connect();
-  }
-  return cachedClient.db();
-}
 
 export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);

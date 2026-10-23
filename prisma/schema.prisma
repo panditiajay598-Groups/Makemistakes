@@ -45,3 +45,71 @@ model ProblemStatement {
   createdAt           DateTime @default(now())
   updatedAt           DateTime @updatedAt
 }
+
+model User {
+  id            String    @id @default(auto()) @map("_id") @db.ObjectId
+  email         String    @unique
+  emailVerified Boolean   @default(true)
+  name          String?
+  role          String    @default("student")
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  subscription  Subscription?
+  orders        PaymentOrder[]
+  creditBalance AiCreditBalance?
+}
+
+model Subscription {
+  id               String    @id @default(auto()) @map("_id") @db.ObjectId
+  userId           String    @unique @db.ObjectId
+  user             User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  plan             String    @default("FREE") // "FREE", "PRO", "MAX"
+  status           String    @default("ACTIVE") // "ACTIVE", "EXPIRED", "CANCELLED", "REFUNDED"
+  startDate        DateTime  @default(now())
+  expiryDate       DateTime?
+  orderId          String?   @unique
+  gatewayPaymentId String?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+}
+
+model PaymentOrder {
+  id               String    @id @default(auto()) @map("_id") @db.ObjectId
+  orderId          String    @unique
+  userId           String    @db.ObjectId
+  user             User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userEmail        String
+  plan             String    // "PRO", "MAX"
+  amount           Int       // Authoritative amount in paise
+  currency         String    @default("INR")
+  status           String    @default("CREATED") // "CREATED", "PAID", "FAILED", "REFUNDED"
+  gateway          String    @default("RAZORPAY")
+  gatewayOrderId   String?
+  gatewayPaymentId String?   @unique
+  gatewaySignature String?
+  idempotencyKey   String?   @unique
+  activatedAt      DateTime?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+}
+
+model AiCreditBalance {
+  id               String    @id @default(auto()) @map("_id") @db.ObjectId
+  userId           String    @unique @db.ObjectId
+  user             User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  totalCredits     Int       @default(100)
+  usedCredits      Int       @default(0)
+  remainingCredits Int       @default(100)
+  updatedAt        DateTime  @updatedAt
+}
+
+model AiCreditTransaction {
+  id           String    @id @default(auto()) @map("_id") @db.ObjectId
+  userId       String    @db.ObjectId
+  amount       Int       // Positive for grant, negative for usage
+  type         String    // "INITIAL_GRANT", "PURCHASE_GRANT", "NOVA_QUERY", "REFUND_DEDUCT", "EXPIRY_DEDUCT"
+  referenceId  String?
+  balanceAfter Int
+  createdAt    DateTime  @default(now())
+}

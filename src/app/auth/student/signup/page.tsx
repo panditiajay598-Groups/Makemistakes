@@ -185,7 +185,7 @@ export default function StudentSignup() {
 
           <button
             onClick={() => {
-              router.push(`/auth/verify?email=${encodeURIComponent(formData.email)}&role=student&redirectTo=/dashboard`);
+              router.push(`/auth/verify?email=${encodeURIComponent(formData.email)}&role=student&redirectTo=/auth/plan`);
             }}
             className="w-full h-11 rounded-full bg-teal-700 hover:bg-teal-800 text-white font-semibold text-xs transition-all flex items-center justify-center gap-2 cursor-pointer border-none shadow-md shadow-teal-700/20"
           >

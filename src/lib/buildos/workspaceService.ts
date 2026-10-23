@@ -1,5 +1,5 @@
-import { MongoClient, type Db } from "mongodb";
-import dns from "dns";
+import { type Db } from "mongodb";
+import { getDb } from "@/lib/mongodb";
 import fs from "fs";
 import path from "path";
 import { randomUUID } from "crypto";
@@ -13,12 +13,6 @@ import {
 } from "./paths";
 import { copyTemplateToWorkspace, listWorkspaceTree } from "./files";
 import { installWorkspaceDependencies, verifyWorkspacePackages, type EnvCheck } from "./install";
-
-try {
-  dns.setServers(["8.8.8.8", "8.8.4.4", "1.1.1.1"]);
-} catch {
-  /* ignore */
-}
 
 export type BuildWorkspaceDoc = {
   workspaceId: string;
@@ -62,15 +56,12 @@ function writeLocalMeta(root: string, doc: BuildWorkspaceDoc) {
 async function withDb<T>(fn: (db: Db) => Promise<T>): Promise<T | null> {
   const url = process.env.DATABASE_URL;
   if (!url) return null;
-  const client = new MongoClient(url);
   try {
-    await client.connect();
-    return await fn(client.db());
+    const db = await getDb();
+    return await fn(db);
   } catch (err) {
     console.warn("BuildOS Mongo unavailable, using local meta:", (err as Error).message);
     return null;
-  } finally {
-    await client.close().catch(() => {});
   }
 }
 
@@ -83,17 +74,20 @@ export async function getWorkspaceMeta(userId: string, problemId: string) {
 }
 
 export async function upsertWorkspaceMeta(
-  doc: Partial<BuildWorkspaceDoc> & { userId: string; problemId: string }
+  doc: Partial<BuildWorkspaceDoc> & { userId: string; problemId: string },
+  cachedExisting?: BuildWorkspaceDoc | null
 ) {
   const now = new Date();
   const root = workspaceDir(doc.userId, doc.problemId);
   const existing =
-    (await withDb(async (db) =>
-      db.collection<BuildWorkspaceDoc>(COLLECTION).findOne({
-        userId: doc.userId,
-        problemId: doc.problemId,
-      })
-    )) || readLocalMeta(root);
+    cachedExisting !== undefined
+      ? cachedExisting
+      : (await withDb(async (db) =>
+          db.collection<BuildWorkspaceDoc>(COLLECTION).findOne({
+            userId: doc.userId,
+            problemId: doc.problemId,
+          })
+        )) || readLocalMeta(root);
 
   const next: BuildWorkspaceDoc = {
     workspaceId: existing?.workspaceId || doc.workspaceId || `ws_${randomUUID()}`,
@@ -132,11 +126,37 @@ export type EnsureWorkspaceResult = {
   created: boolean;
 };
 
+// In-flight provision tracking to prevent race conditions & duplicate work
+const inFlightEnsure = new Map<string, Promise<EnsureWorkspaceResult>>();
+
 /**
  * Create or restore an isolated workspace for userId + problemId.
  * Installs packages inside that workspace only.
  */
 export async function ensureWorkspace(
+  userId: string,
+  problemId: string,
+  options?: { forceReinstall?: boolean }
+): Promise<EnsureWorkspaceResult> {
+  const opKey = `${userId}:${problemId}:${Boolean(options?.forceReinstall)}`;
+  const existingPromise = inFlightEnsure.get(opKey);
+  if (existingPromise) {
+    return existingPromise;
+  }
+
+  const promise = (async () => {
+    try {
+      return await _ensureWorkspaceInternal(userId, problemId, options);
+    } finally {
+      inFlightEnsure.delete(opKey);
+    }
+  })();
+
+  inFlightEnsure.set(opKey, promise);
+  return promise;
+}
+
+async function _ensureWorkspaceInternal(
   userId: string,
   problemId: string,
   options?: { forceReinstall?: boolean }
@@ -157,21 +177,27 @@ export async function ensureWorkspace(
       fs.rmSync(root, { recursive: true, force: true });
     }
     copyTemplateToWorkspace(root);
-    meta = await upsertWorkspaceMeta({
-      userId,
-      problemId,
-      key,
-      workspaceId: meta?.workspaceId,
-      status: "created",
-      lastError: null,
-    });
+    meta = await upsertWorkspaceMeta(
+      {
+        userId,
+        problemId,
+        key,
+        workspaceId: meta?.workspaceId,
+        status: "created",
+        lastError: null,
+      },
+      meta
+    );
   } else if (!meta) {
-    meta = await upsertWorkspaceMeta({
-      userId,
-      problemId,
-      key,
-      status: "created",
-    });
+    meta = await upsertWorkspaceMeta(
+      {
+        userId,
+        problemId,
+        key,
+        status: "created",
+      },
+      null
+    );
   }
 
   // Sanitize any existing app/page.tsx containing legacy scaffold placeholders
@@ -217,12 +243,15 @@ export async function ensureWorkspace(
     meta.status === "installing";
 
   if (needsInstall) {
-    await upsertWorkspaceMeta({
-      userId,
-      problemId,
-      status: "installing",
-      lastError: null,
-    });
+    await upsertWorkspaceMeta(
+      {
+        userId,
+        problemId,
+        status: "installing",
+        lastError: null,
+      },
+      meta
+    );
     provisionLogs.push("Installing development environment...");
     const install = await installWorkspaceDependencies(root);
     provisionLogs.push(...install.logs.slice(-20));
@@ -247,13 +276,19 @@ export async function ensureWorkspace(
   }
 
   const verify = verifyWorkspacePackages(root);
-  const ready = await upsertWorkspaceMeta({
-    userId,
-    problemId,
-    status: "ready",
-    envChecks: verify.checks,
-    lastError: null,
-  });
+  const ready =
+    meta.status === "ready" && !needsInstall
+      ? meta
+      : await upsertWorkspaceMeta(
+          {
+            userId,
+            problemId,
+            status: "ready",
+            envChecks: verify.checks,
+            lastError: null,
+          },
+          meta
+        );
 
   provisionLogs.push("✓ Node.js ready");
   provisionLogs.push("✓ Next.js ready");

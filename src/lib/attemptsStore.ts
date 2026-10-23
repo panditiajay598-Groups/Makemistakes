@@ -36,6 +36,8 @@ export type MissionAttemptStatus =
   | "Practicing Again"
   | "Locked";
 
+import { getCachedParsedItem, setCachedParsedItem } from "./storageCache";
+
 const ATTEMPTS_KEY = "makemistakes_mission_attempts_v1";
 
 // Seed initial realistic data for demonstration
@@ -131,12 +133,12 @@ const SEED_ATTEMPTS: Attempt[] = [
 export function getAllAttempts(): Attempt[] {
   if (typeof window === "undefined") return SEED_ATTEMPTS;
   try {
-    const raw = localStorage.getItem(ATTEMPTS_KEY);
-    if (!raw) {
-      localStorage.setItem(ATTEMPTS_KEY, JSON.stringify(SEED_ATTEMPTS));
+    const existing = getCachedParsedItem<Attempt[] | null>(ATTEMPTS_KEY, null);
+    if (!existing) {
+      setCachedParsedItem(ATTEMPTS_KEY, SEED_ATTEMPTS);
       return SEED_ATTEMPTS;
     }
-    return JSON.parse(raw);
+    return existing;
   } catch (e) {
     console.warn("Failed to load attempts from localStorage", e);
     return SEED_ATTEMPTS;
@@ -146,7 +148,7 @@ export function getAllAttempts(): Attempt[] {
 export function saveAllAttempts(attempts: Attempt[]): void {
   if (typeof window === "undefined") return;
   try {
-    localStorage.setItem(ATTEMPTS_KEY, JSON.stringify(attempts));
+    setCachedParsedItem(ATTEMPTS_KEY, attempts);
   } catch (e) {
     console.warn("Failed to save attempts to localStorage", e);
   }

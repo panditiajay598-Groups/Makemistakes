@@ -1,23 +1,9 @@
 import { NextResponse } from "next/server";
-import { MongoClient } from "mongodb";
+import { getDb } from "@/lib/mongodb";
 import fs from "fs";
 import path from "path";
-import dns from "dns";
-
-try { dns.setServers(["8.8.8.8", "8.8.4.4", "1.1.1.1"]); } catch {}
 
 export const runtime = "nodejs";
-
-let cachedClient: MongoClient | null = null;
-async function getDb() {
-  const url = process.env.DATABASE_URL;
-  if (!url) throw new Error("DATABASE_URL not set");
-  if (!cachedClient) {
-    cachedClient = new MongoClient(url);
-    await cachedClient.connect();
-  }
-  return cachedClient.db();
-}
 
 function sanitizeCode(code: string): string {
   // Strip hardcoded API keys and secrets before pushing to public/private repo

@@ -30,7 +30,9 @@ import {
   Camera,
   Moon,
   Monitor,
+  Zap,
 } from "lucide-react";
+import CheckoutModal from "@/components/payment/CheckoutModal";
 import { getOnboardingProfile, UserOnboardingProfile } from "@/lib/onboardingStore";
 import { getJourneyUserId } from "@/lib/journeyUser";
 
@@ -126,6 +128,9 @@ function SettingsContent() {
   const [deleteConfirmInput, setDeleteConfirmInput] = useState("");
   const [deleteStatus, setDeleteStatus] = useState<"idle" | "deleting" | "error">("idle");
   const [upgradeNotice, setUpgradeNotice] = useState(false);
+  const [subscriptionData, setSubscriptionData] = useState<any>(null);
+  const [checkoutPlan, setCheckoutPlan] = useState<"PRO" | "MAX">("PRO");
+  const [showCheckoutModal, setShowCheckoutModal] = useState(false);
   const [githubConnected, setGithubConnected] = useState(false);
   const [githubUsername, setGithubUsername] = useState("");
 
@@ -150,8 +155,17 @@ function SettingsContent() {
     try {
       setLoading(true);
 
+      const authHeaders: Record<string, string> = {};
+      if (typeof window !== "undefined") {
+        const token = localStorage.getItem("auth_token") || localStorage.getItem("token");
+        if (token) authHeaders["Authorization"] = `Bearer ${token}`;
+      }
+
       // 1. Fetch Profile
-      const profRes = await fetch(`/api/settings/profile?userId=${encodeURIComponent(userId)}`);
+      const profRes = await fetch(`/api/settings/profile`, {
+        headers: authHeaders,
+        credentials: "same-origin",
+      });
       if (profRes.ok) {
         const pData = await profRes.json();
         if (pData.profile) {
@@ -164,7 +178,10 @@ function SettingsContent() {
       }
 
       // 2. Fetch Preferences
-      const prefRes = await fetch(`/api/settings/preferences?userId=${encodeURIComponent(userId)}`);
+      const prefRes = await fetch(`/api/settings/preferences`, {
+        headers: authHeaders,
+        credentials: "same-origin",
+      });
       if (prefRes.ok) {
         const prData = await prefRes.json();
         if (prData.preferences) {
@@ -207,8 +224,17 @@ function SettingsContent() {
             }
           }
         }
-      } catch (e) {}
+      } catch (jErr) {}
 
+      try {
+        const subRes = await fetch(`/api/subscription/me?email=${encodeURIComponent(profileState.email || userId)}`);
+        if (subRes.ok) {
+          const subData = await subRes.json();
+          setSubscriptionData(subData);
+        }
+      } catch (subErr) {
+        console.warn("Failed to load subscription status:", subErr);
+      }
     } catch (err) {
       console.warn("Failed to load settings data:", err);
     } finally {
@@ -234,9 +260,16 @@ function SettingsContent() {
       setSaveStatus("saving");
       setErrorMessage("");
 
+      const authHeaders: Record<string, string> = {};
+      if (typeof window !== "undefined") {
+        const token = localStorage.getItem("auth_token") || localStorage.getItem("token");
+        if (token) authHeaders["Authorization"] = `Bearer ${token}`;
+      }
+
       const res = await fetch("/api/settings/profile", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...authHeaders },
+        credentials: "same-origin",
         body: JSON.stringify({
           userId,
           profile: profileState,
@@ -290,9 +323,16 @@ function SettingsContent() {
     }
 
     try {
+      const authHeaders: Record<string, string> = {};
+      if (typeof window !== "undefined") {
+        const token = localStorage.getItem("auth_token") || localStorage.getItem("token");
+        if (token) authHeaders["Authorization"] = `Bearer ${token}`;
+      }
+
       await fetch("/api/settings/preferences", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...authHeaders },
+        credentials: "same-origin",
         body: JSON.stringify({
           userId,
           preferences: nextPrefs,
@@ -315,9 +355,16 @@ function SettingsContent() {
     }
     try {
       setDeleteStatus("deleting");
+      const authHeaders: Record<string, string> = {};
+      if (typeof window !== "undefined") {
+        const token = localStorage.getItem("auth_token") || localStorage.getItem("token");
+        if (token) authHeaders["Authorization"] = `Bearer ${token}`;
+      }
+
       const res = await fetch("/api/settings/delete-account", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...authHeaders },
+        credentials: "same-origin",
         body: JSON.stringify({
           userId,
           confirmation: "DELETE",
@@ -1080,10 +1127,11 @@ function SettingsContent() {
                       Billing & Subscription
                     </h2>
                     <p className="text-xs text-zinc-500 font-sans mt-0.5">
-                      Manage your plan tier and billing information.
+                      Authoritative account-bound subscription, AI credit balances, and verified entitlements.
                     </p>
                   </div>
 
+                  {/* Current Active Plan Card */}
                   <div className="p-6 rounded-2xl border border-teal-200 bg-teal-50/60 space-y-4">
                     <div className="flex items-center justify-between">
                       <div>
@@ -1091,31 +1139,207 @@ function SettingsContent() {
                           Current Plan
                         </span>
                         <h3 className="text-xl font-serif font-bold text-zinc-900 mt-1">
-                          Free Community Tier
+                          {subscriptionData?.plan === "MAX"
+                            ? "Max Founder Tier"
+                            : subscriptionData?.plan === "PRO"
+                            ? "Pro Builder Tier"
+                            : "Free Community Tier"}
                         </h3>
                       </div>
-                      <span className="text-2xl font-bold font-mono text-zinc-900">$0 / mo</span>
+                      <span className="text-2xl font-bold font-mono text-zinc-900">
+                        {subscriptionData?.plan === "MAX"
+                          ? "₹2,499 / mo"
+                          : subscriptionData?.plan === "PRO"
+                          ? "₹999 / mo"
+                          : "₹0 (Free)"}
+                      </span>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-2">
+                      <div className="p-3 bg-white/80 rounded-xl border border-teal-100 space-y-1">
+                        <span className="text-[10px] font-mono text-zinc-400 uppercase font-bold block">
+                          Entitlement Status
+                        </span>
+                        <span className="text-xs font-mono font-bold text-emerald-700 flex items-center gap-1">
+                          <CheckCircle2 className="h-3.5 w-3.5" />
+                          {subscriptionData?.status || "ACTIVE"}
+                        </span>
+                      </div>
+
+                      <div className="p-3 bg-white/80 rounded-xl border border-teal-100 space-y-1">
+                        <span className="text-[10px] font-mono text-zinc-400 uppercase font-bold block">
+                          AI Credits Available
+                        </span>
+                        <span className="text-xs font-mono font-bold text-teal-900 flex items-center gap-1">
+                          <Zap className="h-3.5 w-3.5 text-teal-600" />
+                          {subscriptionData?.credits?.remaining ?? 100} / {subscriptionData?.credits?.total ?? 100}
+                        </span>
+                      </div>
+
+                      <div className="p-3 bg-white/80 rounded-xl border border-teal-100 space-y-1">
+                        <span className="text-[10px] font-mono text-zinc-400 uppercase font-bold block">
+                          Billing Cycle
+                        </span>
+                        <span className="text-xs font-mono font-bold text-zinc-700">
+                          {subscriptionData?.expiryDate
+                            ? `Renews ${new Date(subscriptionData.expiryDate).toLocaleDateString()}`
+                            : "Free Forever"}
+                        </span>
+                      </div>
                     </div>
 
                     <p className="text-xs text-zinc-600 font-sans leading-relaxed">
-                      Your current plan includes full access to all 8 phases of the Product Journey, Socratic AI mentor feedback, GitHub repository pushing, and certified proof of work portfolio generation.
+                      Your subscription is bound to this internal account. Socratic Nova AI reviews,
+                      proof of work portfolio telemetry, and recruiter verification are authorized
+                      authoritatively on the server.
                     </p>
+                  </div>
 
-                    <div className="pt-2 border-t border-teal-100 flex items-center justify-between">
-                      <span className="text-xs font-mono text-zinc-500">Billing status: Active</span>
-                      <button
-                        onClick={() => setUpgradeNotice(true)}
-                        className="px-4 py-2 rounded-xl bg-teal-800 hover:bg-teal-700 text-white text-xs font-semibold font-sans cursor-pointer transition-all"
-                      >
-                        Upgrade Options
-                      </button>
+                  {/* Available Upgrades Section */}
+                  <div className="space-y-4 pt-2">
+                    <h3 className="text-sm font-serif font-bold text-zinc-900">
+                      Available Subscription Tiers
+                    </h3>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      {/* PRO BUILDER */}
+                      <div className="p-5 rounded-2xl border border-zinc-200 bg-zinc-50 flex flex-col justify-between space-y-4">
+                        <div>
+                          <div className="flex items-center justify-between">
+                            <span className="text-[10px] font-mono font-bold text-teal-700 bg-teal-100 px-2 py-0.5 rounded uppercase">
+                              Most Popular
+                            </span>
+                            <span className="text-lg font-bold font-mono text-zinc-900">₹999 / mo</span>
+                          </div>
+                          <h4 className="text-base font-serif font-bold text-zinc-900 mt-2">
+                            Pro Builder Tier
+                          </h4>
+                          <p className="text-xs text-zinc-500 mt-1">
+                            For serious student engineers aiming for top startup roles.
+                          </p>
+                          <ul className="mt-3 space-y-1.5 text-xs text-zinc-600 font-sans">
+                            <li className="flex items-center gap-1.5">
+                              <CheckCircle2 className="h-3.5 w-3.5 text-teal-700 shrink-0" />
+                              <span>1,000 AI Credits / month with priority queue</span>
+                            </li>
+                            <li className="flex items-center gap-1.5">
+                              <CheckCircle2 className="h-3.5 w-3.5 text-teal-700 shrink-0" />
+                              <span>Verified recruiter telemetry benchmark</span>
+                            </li>
+                            <li className="flex items-center gap-1.5">
+                              <CheckCircle2 className="h-3.5 w-3.5 text-teal-700 shrink-0" />
+                              <span>Custom domain portfolio linking</span>
+                            </li>
+                          </ul>
+                        </div>
+
+                        <button
+                          onClick={() => {
+                            setCheckoutPlan("PRO");
+                            setShowCheckoutModal(true);
+                          }}
+                          disabled={subscriptionData?.plan === "PRO"}
+                          className={`w-full py-2.5 rounded-xl font-semibold text-xs transition-all cursor-pointer ${
+                            subscriptionData?.plan === "PRO"
+                              ? "bg-zinc-200 text-zinc-500 cursor-default"
+                              : "bg-teal-800 hover:bg-teal-700 text-white"
+                          }`}
+                        >
+                          {subscriptionData?.plan === "PRO" ? "Current Active Plan" : "Upgrade to Pro (₹999)"}
+                        </button>
+                      </div>
+
+                      {/* MAX FOUNDER */}
+                      <div className="p-5 rounded-2xl border border-zinc-200 bg-zinc-50 flex flex-col justify-between space-y-4">
+                        <div>
+                          <div className="flex items-center justify-between">
+                            <span className="text-[10px] font-mono font-bold text-amber-700 bg-amber-100 px-2 py-0.5 rounded uppercase">
+                              Elite Tier
+                            </span>
+                            <span className="text-lg font-bold font-mono text-zinc-900">₹2,499 / mo</span>
+                          </div>
+                          <h4 className="text-base font-serif font-bold text-zinc-900 mt-2">
+                            Max Founder Tier
+                          </h4>
+                          <p className="text-xs text-zinc-500 mt-1">
+                            Full unconstrained power for founders and senior engineering candidates.
+                          </p>
+                          <ul className="mt-3 space-y-1.5 text-xs text-zinc-600 font-sans">
+                            <li className="flex items-center gap-1.5">
+                              <CheckCircle2 className="h-3.5 w-3.5 text-teal-700 shrink-0" />
+                              <span>5,000 AI Credits / month for intensive building</span>
+                            </li>
+                            <li className="flex items-center gap-1.5">
+                              <CheckCircle2 className="h-3.5 w-3.5 text-teal-700 shrink-0" />
+                              <span>Direct recruiter introductions & routing</span>
+                            </li>
+                            <li className="flex items-center gap-1.5">
+                              <CheckCircle2 className="h-3.5 w-3.5 text-teal-700 shrink-0" />
+                              <span>1-on-1 Socratic mentor escalation</span>
+                            </li>
+                          </ul>
+                        </div>
+
+                        <button
+                          onClick={() => {
+                            setCheckoutPlan("MAX");
+                            setShowCheckoutModal(true);
+                          }}
+                          disabled={subscriptionData?.plan === "MAX"}
+                          className={`w-full py-2.5 rounded-xl font-semibold text-xs transition-all cursor-pointer ${
+                            subscriptionData?.plan === "MAX"
+                              ? "bg-zinc-200 text-zinc-500 cursor-default"
+                              : "bg-zinc-900 hover:bg-zinc-800 text-white"
+                          }`}
+                        >
+                          {subscriptionData?.plan === "MAX" ? "Current Active Plan" : "Upgrade to Max (₹2,499)"}
+                        </button>
+                      </div>
                     </div>
                   </div>
 
-                  {upgradeNotice && (
-                    <div className="p-3.5 rounded-xl bg-teal-100 border border-teal-200 text-teal-900 text-xs font-sans flex items-center justify-between">
-                      <span>Paid subscription tiers for team workspaces will be available soon. Your free access is active indefinitely.</span>
-                      <button onClick={() => setUpgradeNotice(false)} className="font-mono text-xs text-teal-700 underline font-bold cursor-pointer ml-2">Dismiss</button>
+                  {/* Order History Table if exists */}
+                  {subscriptionData?.orders && subscriptionData.orders.length > 0 && (
+                    <div className="space-y-3 pt-4 border-t border-zinc-100">
+                      <h4 className="text-xs font-mono font-bold uppercase text-zinc-700">
+                        Payment & Order History
+                      </h4>
+                      <div className="overflow-x-auto rounded-xl border border-zinc-200">
+                        <table className="w-full text-left text-xs font-sans">
+                          <thead className="bg-zinc-50 text-zinc-500 font-mono text-[11px] border-b border-zinc-200">
+                            <tr>
+                              <th className="p-3">Order ID</th>
+                              <th className="p-3">Plan</th>
+                              <th className="p-3">Amount</th>
+                              <th className="p-3">Status</th>
+                              <th className="p-3">Date</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-zinc-100">
+                            {subscriptionData.orders.map((o: any) => (
+                              <tr key={o.orderId} className="hover:bg-zinc-50/50">
+                                <td className="p-3 font-mono text-zinc-800 truncate max-w-[140px]">{o.orderId}</td>
+                                <td className="p-3 font-medium text-zinc-900">{o.plan}</td>
+                                <td className="p-3 font-mono text-zinc-700">₹{(o.amount / 100).toLocaleString("en-IN")}</td>
+                                <td className="p-3">
+                                  <span className={`text-[10px] font-mono px-2 py-0.5 rounded-full font-bold ${
+                                    o.status === "PAID"
+                                      ? "bg-emerald-100 text-emerald-800"
+                                      : o.status === "CREATED"
+                                      ? "bg-amber-100 text-amber-800"
+                                      : "bg-red-100 text-red-800"
+                                  }`}>
+                                    {o.status}
+                                  </span>
+                                </td>
+                                <td className="p-3 text-zinc-400 font-mono text-[11px]">
+                                  {new Date(o.createdAt).toLocaleDateString()}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
                     </div>
                   )}
                 </div>
@@ -1357,6 +1581,18 @@ function SettingsContent() {
           </div>
         </div>
       )}
+      {/* ============================================================ */}
+      {/* 9. CHECKOUT / UPGRADE MODAL                                  */}
+      {/* ============================================================ */}
+      <CheckoutModal
+        isOpen={showCheckoutModal}
+        onClose={() => setShowCheckoutModal(false)}
+        selectedPlan={checkoutPlan}
+        userEmail={profileState.email || userId}
+        onSuccess={() => {
+          loadData();
+        }}
+      />
     </div>
   );
 }

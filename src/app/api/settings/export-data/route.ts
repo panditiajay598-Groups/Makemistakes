@@ -1,42 +1,55 @@
 import { NextResponse } from "next/server";
-import { MongoClient } from "mongodb";
-import dns from "dns";
-
-try {
-  dns.setServers(["8.8.8.8", "8.8.4.4", "1.1.1.1"]);
-} catch (e) {}
-
-const DATABASE_URL = process.env.DATABASE_URL;
+import { getDb } from "@/lib/mongodb";
+import { getAuthSession } from "@/lib/authSession";
+import { applyNoStoreHeaders } from "@/lib/cacheHeaders";
 
 export async function GET(req: Request) {
-  let client: MongoClient | null = null;
   try {
-    const { searchParams } = new URL(req.url);
-    const userId = (searchParams.get("userId") || "default_user")
-      .toString()
-      .trim()
-      .toLowerCase();
-
-    if (!DATABASE_URL) {
-      return NextResponse.json(
-        { error: "DATABASE_URL is not configured" },
-        { status: 500 }
+    if (!process.env.DATABASE_URL) {
+      return applyNoStoreHeaders(
+        NextResponse.json(
+          { error: "DATABASE_URL is not configured" },
+          { status: 500 }
+        )
       );
     }
 
-    client = new MongoClient(DATABASE_URL);
-    await client.connect();
-    const db = client.db();
+    const session = await getAuthSession(req);
+    if (!session) {
+      return applyNoStoreHeaders(
+        NextResponse.json(
+          { error: "Unauthorized. Authentication session required to export personal data." },
+          { status: 401 }
+        )
+      );
+    }
 
-    const profileDoc = await db.collection("user_profiles").findOne({ userId });
-    const prefDoc = await db.collection("user_preferences").findOne({ userId });
-    const journeys = await db.collection("user_journeys").find({ userId }).toArray();
-    const completions = await db.collection("problem_completions").find({ userId }).toArray();
+    const authIdentifiers: string[] = [];
+    if (session.email?.trim()) {
+      authIdentifiers.push(session.email.trim().toLowerCase());
+    }
+    if (session.userId?.trim() && !authIdentifiers.includes(session.userId.trim())) {
+      authIdentifiers.push(session.userId.trim());
+    }
 
-    await client.close();
+    const primaryUserId = authIdentifiers[0] || session.userId;
+    const userFilter = authIdentifiers.length === 1
+      ? { userId: authIdentifiers[0] }
+      : { userId: { $in: authIdentifiers } };
+
+    const db = await getDb();
+
+    const [profileDoc, prefDoc, journeys, completions, workspaces] = await Promise.all([
+      db.collection("user_profiles").findOne(userFilter),
+      db.collection("user_preferences").findOne(userFilter),
+      db.collection("user_journeys").find(userFilter).toArray(),
+      db.collection("problem_completions").find(userFilter).toArray(),
+      db.collection("build_workspaces").find(userFilter).toArray(),
+    ]);
 
     const exportData = {
-      user: userId,
+      user: primaryUserId,
+      email: session.email || null,
       exportedAt: new Date().toISOString(),
       profile: profileDoc ? { ...profileDoc, _id: undefined } : null,
       preferences: prefDoc ? { ...prefDoc, _id: undefined } : null,
@@ -44,21 +57,25 @@ export async function GET(req: Request) {
       journeys: journeys.map(({ _id, ...j }) => j),
       completionsCount: completions.length,
       completions: completions.map(({ _id, ...c }) => c),
+      workspacesCount: workspaces.length,
+      workspaces: workspaces.map(({ _id, ...w }) => w),
     };
 
-    return new NextResponse(JSON.stringify(exportData, null, 2), {
+    const res = new NextResponse(JSON.stringify(exportData, null, 2), {
       status: 200,
       headers: {
         "Content-Type": "application/json",
-        "Content-Disposition": `attachment; filename="makemistakes-data-export-${userId}.json"`,
+        "Content-Disposition": `attachment; filename="makemistakes-data-export-${primaryUserId}.json"`,
       },
     });
+    return applyNoStoreHeaders(res);
   } catch (err: any) {
-    if (client) await client.close().catch(() => {});
     console.error("Error in GET /api/settings/export-data:", err);
-    return NextResponse.json(
-      { error: err.message || "Failed to export personal data" },
-      { status: 500 }
+    return applyNoStoreHeaders(
+      NextResponse.json(
+        { error: err.message || "Failed to export personal data" },
+        { status: 500 }
+      )
     );
   }
 }

@@ -140,27 +140,19 @@ export class OTPService {
     });
 
     if (!record) {
-      throw new Error("No verification request found for this email. Please request an OTP.");
-    }
-
-    if (record.verified) {
-      return {
-        success: true,
-        verified: true,
-        message: "Email is already verified.",
-      };
+      throw new Error("Invalid or expired verification code. Please request a new code.");
     }
 
     const now = new Date();
 
     // Check expiration (10 min)
     if (now > new Date(record.expiresAt)) {
-      throw new Error("Expired OTP. Please request a new verification code.");
+      throw new Error("Invalid or expired verification code. Please request a new code.");
     }
 
     // Check maximum attempts (5)
     if (record.attempts >= 5) {
-      throw new Error("Maximum verification attempts exceeded. Please request a new OTP.");
+      throw new Error("Maximum verification attempts exceeded. Please request a new code.");
     }
 
     // Compare bcrypt hash
@@ -175,18 +167,24 @@ export class OTPService {
 
       const remainingAttempts = Math.max(0, 5 - updatedAttempts);
       throw new Error(
-        `Invalid OTP code. ${
-          remainingAttempts > 0
-            ? `${remainingAttempts} attempt(s) remaining.`
-            : "Maximum attempts exceeded. Please request a new OTP."
-        }`
+        remainingAttempts > 0
+          ? `Invalid verification code. ${remainingAttempts} attempt(s) remaining.`
+          : "Maximum verification attempts exceeded. Please request a new code."
       );
     }
 
-    // Valid OTP: Delete OTP record securely from database
-    await prisma.emailVerification.delete({
-      where: { email },
-    });
+    // Valid OTP: Delete OTP record securely from database (prevents replay attacks)
+    try {
+      await prisma.emailVerification.delete({
+        where: { email },
+      });
+    } catch {
+      return {
+        success: false,
+        verified: false,
+        message: "Invalid or expired verification code. Please request a new code.",
+      };
+    }
 
     return {
       success: true,

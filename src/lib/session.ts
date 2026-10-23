@@ -1,4 +1,5 @@
 import { getMissionStateDetails, getActiveAttempt } from "./attemptsStore";
+import { getCachedParsedItem, setCachedParsedItem } from "./storageCache";
 
 export interface MissionSession {
   missionId: string;
@@ -31,7 +32,7 @@ export function saveActiveSession(session: Partial<MissionSession>) {
       lastActive: new Date().toISOString(),
       verificationStatus: session.verificationStatus ?? existing?.verificationStatus ?? "idle",
     };
-    localStorage.setItem(SESSION_KEY, JSON.stringify(updated));
+    setCachedParsedItem(SESSION_KEY, updated);
   } catch (e) {
     console.warn("Failed to save active mission session", e);
   }
@@ -40,9 +41,7 @@ export function saveActiveSession(session: Partial<MissionSession>) {
 export function getActiveSession(): MissionSession | null {
   if (typeof window === "undefined") return null;
   try {
-    const raw = localStorage.getItem(SESSION_KEY);
-    if (!raw) return null;
-    return JSON.parse(raw);
+    return getCachedParsedItem<MissionSession | null>(SESSION_KEY, null);
   } catch (e) {
     console.warn("Failed to read active mission session", e);
     return null;

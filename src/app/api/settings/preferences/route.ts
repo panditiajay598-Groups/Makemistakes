@@ -1,12 +1,7 @@
 import { NextResponse } from "next/server";
-import { MongoClient } from "mongodb";
-import dns from "dns";
-
-try {
-  dns.setServers(["8.8.8.8", "8.8.4.4", "1.1.1.1"]);
-} catch (e) {}
-
-const DATABASE_URL = process.env.DATABASE_URL;
+import { getDb } from "@/lib/mongodb";
+import { getAuthSession } from "@/lib/authSession";
+import { applyNoStoreHeaders } from "@/lib/cacheHeaders";
 
 const DEFAULT_PREFERENCES = {
   defaultDashboard: "/dashboard",
@@ -24,28 +19,41 @@ const DEFAULT_PREFERENCES = {
 };
 
 export async function GET(req: Request) {
-  let client: MongoClient | null = null;
   try {
-    const { searchParams } = new URL(req.url);
-    const userId = (searchParams.get("userId") || "default_user")
-      .toString()
-      .trim()
-      .toLowerCase();
-
-    if (!DATABASE_URL) {
-      return NextResponse.json(
-        { error: "DATABASE_URL is not configured" },
-        { status: 500 }
+    if (!process.env.DATABASE_URL) {
+      return applyNoStoreHeaders(
+        NextResponse.json(
+          { error: "DATABASE_URL is not configured" },
+          { status: 500 }
+        )
       );
     }
 
-    client = new MongoClient(DATABASE_URL);
-    await client.connect();
-    const db = client.db();
+    const session = await getAuthSession(req);
+    if (!session) {
+      return applyNoStoreHeaders(
+        NextResponse.json(
+          { error: "Unauthorized. Authentication session required." },
+          { status: 401 }
+        )
+      );
+    }
 
+    const authIdentifiers: string[] = [];
+    if (session.email?.trim()) {
+      authIdentifiers.push(session.email.trim().toLowerCase());
+    }
+    if (session.userId?.trim() && !authIdentifiers.includes(session.userId.trim())) {
+      authIdentifiers.push(session.userId.trim());
+    }
+
+    const userFilter = authIdentifiers.length === 1
+      ? { userId: authIdentifiers[0] }
+      : { userId: { $in: authIdentifiers } };
+
+    const db = await getDb();
     const collection = db.collection("user_preferences");
-    const prefDoc = await collection.findOne({ userId });
-    await client.close();
+    const prefDoc = await collection.findOne(userFilter);
 
     if (!prefDoc) {
       return NextResponse.json({
@@ -55,53 +63,73 @@ export async function GET(req: Request) {
     }
 
     const { _id, ...rest } = prefDoc;
-    return NextResponse.json({
-      exists: true,
-      preferences: {
-        ...DEFAULT_PREFERENCES,
-        ...rest,
-        notifications: {
-          ...DEFAULT_PREFERENCES.notifications,
-          ...(rest.notifications || {}),
+    return applyNoStoreHeaders(
+      NextResponse.json({
+        exists: true,
+        preferences: {
+          ...DEFAULT_PREFERENCES,
+          ...rest,
+          notifications: {
+            ...DEFAULT_PREFERENCES.notifications,
+            ...(rest.notifications || {}),
+          },
         },
-      },
-    });
+      })
+    );
   } catch (err: any) {
-    if (client) await client.close().catch(() => {});
     console.error("Error in GET /api/settings/preferences:", err);
-    return NextResponse.json(
-      { error: err.message || "Failed to load preferences" },
-      { status: 500 }
+    return applyNoStoreHeaders(
+      NextResponse.json(
+        { error: err.message || "Failed to load preferences" },
+        { status: 500 }
+      )
     );
   }
 }
 
 export async function POST(req: Request) {
-  let client: MongoClient | null = null;
   try {
-    const body = await req.json().catch(() => ({}));
-    const userId = (body.userId || "default_user")
-      .toString()
-      .trim()
-      .toLowerCase();
-    const preferences = body.preferences || {};
-
-    if (!DATABASE_URL) {
-      return NextResponse.json(
-        { error: "DATABASE_URL is not configured" },
-        { status: 500 }
+    if (!process.env.DATABASE_URL) {
+      return applyNoStoreHeaders(
+        NextResponse.json(
+          { error: "DATABASE_URL is not configured" },
+          { status: 500 }
+        )
       );
     }
 
-    client = new MongoClient(DATABASE_URL);
-    await client.connect();
-    const db = client.db();
+    const session = await getAuthSession(req);
+    if (!session) {
+      return applyNoStoreHeaders(
+        NextResponse.json(
+          { error: "Unauthorized. Authentication session required." },
+          { status: 401 }
+        )
+      );
+    }
 
+    const authIdentifiers: string[] = [];
+    if (session.email?.trim()) {
+      authIdentifiers.push(session.email.trim().toLowerCase());
+    }
+    if (session.userId?.trim() && !authIdentifiers.includes(session.userId.trim())) {
+      authIdentifiers.push(session.userId.trim());
+    }
+
+    const primaryUserId = authIdentifiers[0] || session.userId;
+    const userFilter = authIdentifiers.length === 1
+      ? { userId: authIdentifiers[0] }
+      : { userId: { $in: authIdentifiers } };
+
+    const body = await req.json().catch(() => ({}));
+    const preferences = body.preferences || {};
+
+    const db = await getDb();
     const collection = db.collection("user_preferences");
     const now = new Date();
 
     const updatedPreferences = {
-      userId,
+      userId: primaryUserId,
       defaultDashboard: preferences.defaultDashboard || "/dashboard",
       language: preferences.language || "English",
       dateFormat: preferences.dateFormat || "MMM DD, YYYY",
@@ -117,8 +145,36 @@ export async function POST(req: Request) {
       updatedAt: now,
     };
 
+    const existing = await collection.findOne(userFilter);
+    if (existing) {
+      const isUnchanged =
+        (existing.defaultDashboard || "/dashboard") === updatedPreferences.defaultDashboard &&
+        (existing.language || "English") === updatedPreferences.language &&
+        (existing.dateFormat || "MMM DD, YYYY") === updatedPreferences.dateFormat &&
+        (existing.theme || "light") === updatedPreferences.theme &&
+        Boolean(existing.compactMode) === updatedPreferences.compactMode &&
+        Boolean(existing.notifications?.journeyUpdates ?? true) === updatedPreferences.notifications.journeyUpdates &&
+        Boolean(existing.notifications?.buildAlerts ?? true) === updatedPreferences.notifications.buildAlerts &&
+        Boolean(existing.notifications?.githubAlerts ?? true) === updatedPreferences.notifications.githubAlerts &&
+        Boolean(existing.notifications?.aiAlerts ?? false) === updatedPreferences.notifications.aiAlerts &&
+        Boolean(existing.notifications?.securityAlerts ?? true) === updatedPreferences.notifications.securityAlerts;
+
+      if (isUnchanged) {
+        const { _id, ...rest } = existing;
+        return applyNoStoreHeaders(
+          NextResponse.json({
+            success: true,
+            userId: primaryUserId,
+            preferences: rest,
+            updatedAt: existing.updatedAt || now,
+            skippedWrite: true,
+          })
+        );
+      }
+    }
+
     await collection.updateOne(
-      { userId },
+      userFilter,
       {
         $set: updatedPreferences,
         $setOnInsert: { createdAt: now },
@@ -126,20 +182,21 @@ export async function POST(req: Request) {
       { upsert: true }
     );
 
-    await client.close();
-
-    return NextResponse.json({
-      success: true,
-      userId,
-      preferences: updatedPreferences,
-      updatedAt: now,
-    });
+    return applyNoStoreHeaders(
+      NextResponse.json({
+        success: true,
+        userId: primaryUserId,
+        preferences: updatedPreferences,
+        updatedAt: now,
+      })
+    );
   } catch (err: any) {
-    if (client) await client.close().catch(() => {});
     console.error("Error in POST /api/settings/preferences:", err);
-    return NextResponse.json(
-      { error: err.message || "Failed to save preferences" },
-      { status: 500 }
+    return applyNoStoreHeaders(
+      NextResponse.json(
+        { error: err.message || "Failed to save preferences" },
+        { status: 500 }
+      )
     );
   }
 }

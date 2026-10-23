@@ -1,5 +1,6 @@
 import { getOnboardingProfile, saveOnboardingProfile } from "./onboardingStore";
 import { NovaEvaluationResult } from "@/components/mission-engine/missionsData";
+import { getCachedParsedItem, setCachedParsedItem } from "./storageCache";
 
 export interface MissionState {
   missionId: string;
@@ -28,9 +29,9 @@ export function getMissionState(missionId: string): MissionState {
   if (typeof window === "undefined") return defaultState;
 
   try {
-    const raw = localStorage.getItem(`${STORAGE_PREFIX}${missionId}`);
-    if (raw) {
-      return { ...defaultState, ...JSON.parse(raw) };
+    const saved = getCachedParsedItem<Partial<MissionState> | null>(`${STORAGE_PREFIX}${missionId}`, null);
+    if (saved) {
+      return { ...defaultState, ...saved };
     }
   } catch (e) {
     console.warn("Failed to load mission state from localStorage", e);
@@ -42,7 +43,7 @@ export function getMissionState(missionId: string): MissionState {
 export function saveMissionState(state: MissionState): MissionState {
   if (typeof window !== "undefined") {
     try {
-      localStorage.setItem(`${STORAGE_PREFIX}${state.missionId}`, JSON.stringify(state));
+      setCachedParsedItem(`${STORAGE_PREFIX}${state.missionId}`, state);
     } catch (e) {
       console.warn("Failed to save mission state to localStorage", e);
     }

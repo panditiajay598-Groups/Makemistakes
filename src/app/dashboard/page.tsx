@@ -24,6 +24,8 @@ import {
   Zap,
   AlertCircle,
   Layers,
+  ChevronLeft,
+  ChevronRight,
 } from "lucide-react";
 import { getOnboardingProfile, UserOnboardingProfile } from "@/lib/onboardingStore";
 import { getJourneyUserId } from "@/lib/journeyUser";
@@ -77,6 +79,14 @@ export default function BuildOSPage() {
   const [selectedCategory, setSelectedCategory] = useState("All");
   const [selectedDifficulty, setSelectedDifficulty] = useState("All");
 
+  // Pagination State
+  const [currentPage, setCurrentPage] = useState(1);
+  const [pageSize, setPageSize] = useState(20);
+  const [totalCount, setTotalCount] = useState(0);
+  const [totalPages, setTotalPages] = useState(1);
+  const [userMetrics, setUserMetrics] = useState<{ inProgressCount: number; completedCount: number } | null>(null);
+  const activeRequestId = React.useRef(0);
+
   // Selected detail modal
   const [selectedProduct, setSelectedProduct] = useState<ProductCatalogItem | null>(null);
 
@@ -91,36 +101,52 @@ export default function BuildOSPage() {
 
   // Fetch problem statements from database API
   const fetchProducts = useCallback(async () => {
+    const reqId = ++activeRequestId.current;
     try {
       setLoading(true);
       setError(null);
 
       const params = new URLSearchParams({
-        userId,
         search: searchQuery,
         category: selectedCategory,
         difficulty: selectedDifficulty,
         sort: "numerical_asc",
+        page: currentPage.toString(),
+        limit: pageSize.toString(),
       });
 
       const res = await fetch(`/api/products?${params.toString()}`);
+      if (reqId !== activeRequestId.current) return;
+
       if (res.ok) {
         const data = await res.json();
         setProducts(data.products || []);
+        if (typeof data.totalCount === "number") setTotalCount(data.totalCount);
+        if (typeof data.totalPages === "number") setTotalPages(data.totalPages);
         if (data.categories) setCategories(data.categories);
         if (data.difficulties) setDifficulties(data.difficulties);
         if (data.unlockProgress) setUnlockProgress(data.unlockProgress);
+        if (data.userMetrics) setUserMetrics(data.userMetrics);
       } else {
         const errData = await res.json().catch(() => ({}));
         setError(errData.error || "Failed to load problem statements from database.");
       }
     } catch (err: any) {
-      console.error("Error fetching problems:", err);
-      setError("Network error while loading problem statements.");
+      if (reqId === activeRequestId.current) {
+        console.error("Error fetching problems:", err);
+        setError("Network error while loading problem statements.");
+      }
     } finally {
-      setLoading(false);
+      if (reqId === activeRequestId.current) {
+        setLoading(false);
+      }
     }
-  }, [userId, searchQuery, selectedCategory, selectedDifficulty]);
+  }, [searchQuery, selectedCategory, selectedDifficulty, currentPage, pageSize]);
+
+  const handlePageChange = (newPage: number) => {
+    if (newPage < 1 || newPage > totalPages || newPage === currentPage) return;
+    setCurrentPage(newPage);
+  };
 
   useEffect(() => {
     fetchProducts();
@@ -136,9 +162,9 @@ export default function BuildOSPage() {
 
   const userInitial = profile?.whoAreYouRole?.charAt(0)?.toUpperCase() ?? "B";
 
-  // Calculate summary metrics
-  const inProgressCount = products.filter((p) => p.userStatus === "in_progress").length;
-  const completedCount = products.filter((p) => p.userStatus === "completed").length;
+  // Calculate summary metrics (prefer userMetrics from full catalog where available)
+  const inProgressCount = userMetrics?.inProgressCount ?? products.filter((p) => p.userStatus === "in_progress").length;
+  const completedCount = userMetrics?.completedCount ?? products.filter((p) => p.userStatus === "completed").length;
   const activeProblem = products.find((p) => p.userStatus === "in_progress");
 
   return (
@@ -258,7 +284,7 @@ export default function BuildOSPage() {
               {/* Stat Counters */}
               <div className="flex items-center gap-3 shrink-0">
                 <div className="bg-white/10 backdrop-blur-md border border-white/10 rounded-2xl p-4 text-center min-w-[100px]">
-                  <div className="text-2xl font-bold font-mono text-white">{products.length}</div>
+                  <div className="text-2xl font-bold font-mono text-white">{totalCount || products.length}</div>
                   <div className="text-[10px] font-mono text-teal-200 uppercase tracking-wider">Total</div>
                 </div>
                 <div className="bg-white/10 backdrop-blur-md border border-white/10 rounded-2xl p-4 text-center min-w-[100px]">
@@ -312,7 +338,10 @@ export default function BuildOSPage() {
                 type="text"
                 placeholder="Search problem statements..."
                 value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
+                onChange={(e) => {
+                  setSearchQuery(e.target.value);
+                  setCurrentPage(1);
+                }}
                 className="w-full pl-9 pr-4 py-2 rounded-xl bg-zinc-50 border border-zinc-200 text-xs font-sans text-zinc-800 focus:outline-none focus:ring-2 focus:ring-teal-600/30 focus:border-teal-600 transition-all"
               />
             </div>
@@ -327,7 +356,10 @@ export default function BuildOSPage() {
               {/* Category Dropdown */}
               <select
                 value={selectedCategory}
-                onChange={(e) => setSelectedCategory(e.target.value)}
+                onChange={(e) => {
+                  setSelectedCategory(e.target.value);
+                  setCurrentPage(1);
+                }}
                 className="px-3 py-2 rounded-xl bg-zinc-50 border border-zinc-200 text-xs font-mono text-zinc-700 focus:outline-none focus:ring-2 focus:ring-teal-600/30 cursor-pointer shrink-0"
               >
                 <option value="All">All Categories</option>
@@ -341,7 +373,10 @@ export default function BuildOSPage() {
               {/* Difficulty Dropdown */}
               <select
                 value={selectedDifficulty}
-                onChange={(e) => setSelectedDifficulty(e.target.value)}
+                onChange={(e) => {
+                  setSelectedDifficulty(e.target.value);
+                  setCurrentPage(1);
+                }}
                 className="px-3 py-2 rounded-xl bg-zinc-50 border border-zinc-200 text-xs font-mono text-zinc-700 focus:outline-none focus:ring-2 focus:ring-teal-600/30 cursor-pointer shrink-0"
               >
                 <option value="All">All Difficulties</option>
@@ -373,7 +408,7 @@ export default function BuildOSPage() {
               </p>
             </div>
             <span className="text-xs font-mono text-zinc-400">
-              Showing {products.length} statement{products.length === 1 ? "" : "s"}
+              Showing {products.length} of {totalCount || products.length} statement{totalCount === 1 ? "" : "s"}
             </span>
           </div>
 
@@ -572,6 +607,102 @@ export default function BuildOSPage() {
                   </div>
                 );
               })}
+            </div>
+          )}
+
+          {/* Pagination Controls */}
+          {products.length > 0 && totalPages > 1 && (
+            <div className="flex flex-col sm:flex-row items-center justify-between gap-4 pt-6 border-t border-zinc-200">
+              <div className="text-xs font-mono text-zinc-500">
+                Showing <span className="font-semibold text-zinc-800">{(currentPage - 1) * pageSize + 1}</span> to{" "}
+                <span className="font-semibold text-zinc-800">{Math.min(currentPage * pageSize, totalCount)}</span> of{" "}
+                <span className="font-semibold text-zinc-800">{totalCount}</span> statements
+              </div>
+
+              <div className="flex items-center gap-1.5 flex-wrap justify-center">
+                <button
+                  type="button"
+                  disabled={currentPage <= 1 || loading}
+                  onClick={() => handlePageChange(currentPage - 1)}
+                  className={`flex items-center gap-1 px-3 py-1.5 rounded-xl border text-xs font-mono font-semibold transition-all ${
+                    currentPage <= 1 || loading
+                      ? "border-zinc-200 text-zinc-300 cursor-not-allowed bg-zinc-50"
+                      : "border-zinc-200 text-zinc-700 hover:bg-zinc-100 hover:border-zinc-300 cursor-pointer bg-white"
+                  }`}
+                >
+                  <ChevronLeft className="h-3.5 w-3.5" />
+                  <span>Prev</span>
+                </button>
+
+                {(() => {
+                  const pages: (number | "...")[] = [];
+                  if (totalPages <= 7) {
+                    for (let i = 1; i <= totalPages; i++) pages.push(i);
+                  } else if (currentPage <= 4) {
+                    pages.push(1, 2, 3, 4, 5, "...", totalPages);
+                  } else if (currentPage >= totalPages - 3) {
+                    pages.push(1, "...", totalPages - 4, totalPages - 3, totalPages - 2, totalPages - 1, totalPages);
+                  } else {
+                    pages.push(1, "...", currentPage - 1, currentPage, currentPage + 1, "...", totalPages);
+                  }
+                  return pages.map((p, idx) => {
+                    if (p === "...") {
+                      return (
+                        <span key={`ellipsis-${idx}`} className="px-2 py-1 text-xs font-mono text-zinc-400">
+                          ...
+                        </span>
+                      );
+                    }
+                    const isCurrent = p === currentPage;
+                    return (
+                      <button
+                        key={p}
+                        type="button"
+                        disabled={loading}
+                        onClick={() => handlePageChange(p as number)}
+                        className={`h-8 w-8 rounded-xl text-xs font-mono font-semibold transition-all ${
+                          isCurrent
+                            ? "bg-teal-800 text-white shadow-xs"
+                            : "bg-white border border-zinc-200 text-zinc-700 hover:bg-zinc-100 cursor-pointer"
+                        }`}
+                      >
+                        {p}
+                      </button>
+                    );
+                  });
+                })()}
+
+                <button
+                  type="button"
+                  disabled={currentPage >= totalPages || loading}
+                  onClick={() => handlePageChange(currentPage + 1)}
+                  className={`flex items-center gap-1 px-3 py-1.5 rounded-xl border text-xs font-mono font-semibold transition-all ${
+                    currentPage >= totalPages || loading
+                      ? "border-zinc-200 text-zinc-300 cursor-not-allowed bg-zinc-50"
+                      : "border-zinc-200 text-zinc-700 hover:bg-zinc-100 hover:border-zinc-300 cursor-pointer bg-white"
+                  }`}
+                >
+                  <span>Next</span>
+                  <ChevronRight className="h-3.5 w-3.5" />
+                </button>
+              </div>
+
+              {/* Page size dropdown */}
+              <div className="flex items-center gap-2 text-xs font-mono text-zinc-500">
+                <span>Per page:</span>
+                <select
+                  value={pageSize}
+                  onChange={(e) => {
+                    setPageSize(Number(e.target.value));
+                    setCurrentPage(1);
+                  }}
+                  className="px-2.5 py-1 rounded-lg border border-zinc-200 bg-white text-zinc-700 focus:outline-none focus:border-teal-700 cursor-pointer"
+                >
+                  <option value={20}>20</option>
+                  <option value={50}>50</option>
+                  <option value={100}>100</option>
+                </select>
+              </div>
             </div>
           )}
 

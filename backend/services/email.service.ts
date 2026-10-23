@@ -1,6 +1,7 @@
 import dotenv from "dotenv";
 dotenv.config();
 import nodemailer from "nodemailer";
+import { getOrCreateTransporter } from "../../src/lib/emailTransporter";
 import { EmailTemplates } from "../templates/emailTemplates";
 
 interface SmtpAccount {
@@ -81,7 +82,7 @@ export class EmailService {
       this.roundRobinIndex = (this.roundRobinIndex + 1) % smtpAccounts.length;
 
       try {
-        const transporter = nodemailer.createTransport({
+        const transporter = getOrCreateTransporter({
           host: selectedAccount.host,
           port: selectedAccount.port,
           secure: selectedAccount.secure,
@@ -89,7 +90,6 @@ export class EmailService {
             user: selectedAccount.user,
             pass: selectedAccount.pass,
           },
-          // 8-second connection timeout so fallback occurs quickly if network blocks SMTP ports
           connectionTimeout: 8000,
           greetingTimeout: 8000,
         });
@@ -145,7 +145,7 @@ export class EmailService {
     // 3. Fallback: Ethereal Test Inbox for Development
     try {
       const testAccount = await nodemailer.createTestAccount();
-      const etherealTransporter = nodemailer.createTransport({
+      const etherealTransporter = getOrCreateTransporter({
         host: "smtp.ethereal.email",
         port: 587,
         secure: false,

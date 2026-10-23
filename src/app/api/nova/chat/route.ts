@@ -365,7 +365,35 @@ This gives the student structure without giving them the answer.
 
 export async function POST(req: Request) {
   try {
-    const body = await req.json();
+    const { getAuthSession } = await import("@/lib/authSession");
+    const { PaymentService } = await import("@/lib/paymentService");
+    const session = await getAuthSession(req);
+
+    if (!session || !session.userId) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: "UNAUTHORIZED",
+          message: "Authentication session required to use Nova AI mentor.",
+        },
+        { status: 401 }
+      );
+    }
+
+    const creditResult = await PaymentService.deductAiCredit(session.userId, 1, "nova_chat");
+    if (!creditResult.success && creditResult.reason === "INSUFFICIENT_CREDITS") {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: "INSUFFICIENT_CREDITS",
+          message:
+            "You have reached your AI credit limit for this period. Upgrade to Pro Builder or Max Founder in Billing Settings for more credits.",
+        },
+        { status: 402 }
+      );
+    }
+
+    const body = await req.json().catch(() => ({}));
     const messages: ChatMessage[] = Array.isArray(body.messages) ? body.messages : [];
     const context = body.context || {};
     const lastUser = [...messages].reverse().find((m) => m.role === "user")?.content || "";

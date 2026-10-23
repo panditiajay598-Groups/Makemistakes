@@ -1,15 +1,19 @@
 import { NextResponse } from "next/server";
 import nodemailer from "nodemailer";
+import { getOrCreateTransporter } from "@/lib/emailTransporter";
 import { saveCode } from "@/lib/codeStore";
+import { applyNoStoreHeaders } from "@/lib/cacheHeaders";
 
 export async function POST(req: Request) {
   try {
     const { email } = await req.json();
 
     if (!email || typeof email !== "string" || !/\S+@\S+\.\S+/.test(email)) {
-      return NextResponse.json(
-        { success: false, message: "Please provide a valid email address." },
-        { status: 400 }
+      return applyNoStoreHeaders(
+        NextResponse.json(
+          { success: false, message: "Please provide a valid email address." },
+          { status: 400 }
+        )
       );
     }
 
@@ -55,7 +59,7 @@ export async function POST(req: Request) {
     // Try custom/Gmail SMTP first if credentials are in .env.local
     if (smtpUser && smtpPass && !smtpPass.includes("Tarak@renu")) {
       try {
-        const transporter = nodemailer.createTransport({
+        const transporter = getOrCreateTransporter({
           host: smtpHost,
           port: smtpPort,
           secure: smtpSecure,
@@ -68,12 +72,14 @@ export async function POST(req: Request) {
 
         await transporter.sendMail(emailTemplate(email, code));
 
-        return NextResponse.json({
-          success: true,
-          mode: "smtp",
-          code,
-          message: `Verification code sent to ${email} via SMTP!`,
-        });
+        return applyNoStoreHeaders(
+          NextResponse.json({
+            success: true,
+            mode: "smtp",
+            ...(process.env.NODE_ENV === "development" ? { code } : {}),
+            message: `Verification code sent to ${email} via SMTP!`,
+          })
+        );
       } catch (smtpErr: any) {
         console.warn("[MakeMistakes SMTP Custom Warning]:", smtpErr?.message);
         // Fall through to Ethereal Test Inbox
@@ -83,7 +89,7 @@ export async function POST(req: Request) {
     // Option B: Ethereal Automatic Test Inbox
     try {
       const testAccount = await nodemailer.createTestAccount();
-      const etherealTransporter = nodemailer.createTransport({
+      const etherealTransporter = getOrCreateTransporter({
         host: "smtp.ethereal.email",
         port: 587,
         secure: false,
@@ -96,39 +102,47 @@ export async function POST(req: Request) {
       const info = await etherealTransporter.sendMail(emailTemplate(email, code));
       const previewUrl = nodemailer.getTestMessageUrl(info);
 
-      console.log(`\n==============================================`);
-      console.log(`[Ethereal Test Inbox Email Dispatched]`);
-      console.log(`To: ${email}`);
-      console.log(`Code: [ ${code} ]`);
-      console.log(`Preview URL: ${previewUrl}`);
-      console.log(`==============================================\n`);
+      if (process.env.NODE_ENV !== "production") {
+        console.log(`\n==============================================`);
+        console.log(`[Ethereal Test Inbox Email Dispatched]`);
+        console.log(`To: ${email}`);
+        console.log(`Code: [ ${code} ]`);
+        console.log(`Preview URL: ${previewUrl}`);
+        console.log(`==============================================\n`);
+      }
 
-      return NextResponse.json({
-        success: true,
-        mode: "ethereal",
-        code,
-        previewUrl: previewUrl || undefined,
-        message: `Verification email sent! Click 'View Email in Test Inbox' to see the message.`,
-      });
+      return applyNoStoreHeaders(
+        NextResponse.json({
+          success: true,
+          mode: "ethereal",
+          ...(process.env.NODE_ENV === "development" ? { code } : {}),
+          previewUrl: previewUrl || undefined,
+          message: `Verification email sent! Click 'View Email in Test Inbox' to see the message.`,
+        })
+      );
     } catch (etherealErr: any) {
       console.error("Ethereal Test Inbox error:", etherealErr);
 
       // Ultimate fallback
-      return NextResponse.json({
-        success: true,
-        mode: "dev",
-        code,
-        message: `Demo mode: Verification Code (${code}) generated for ${email}.`,
-      });
+      return applyNoStoreHeaders(
+        NextResponse.json({
+          success: true,
+          mode: "dev",
+          ...(process.env.NODE_ENV === "development" ? { code } : {}),
+          message: `Demo mode: Verification Code generated for ${email}.`,
+        })
+      );
     }
   } catch (error: any) {
     console.error("Error in /api/auth/send-code:", error);
-    return NextResponse.json(
-      {
-        success: false,
-        message: error?.message || "Failed to process verification code.",
-      },
-      { status: 500 }
+    return applyNoStoreHeaders(
+      NextResponse.json(
+        {
+          success: false,
+          message: "Failed to process verification code. Please try again.",
+        },
+        { status: 500 }
+      )
     );
   }
 }

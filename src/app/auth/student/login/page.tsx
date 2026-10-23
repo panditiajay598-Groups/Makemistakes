@@ -43,10 +43,10 @@ export default function StudentLogin() {
         localStorage.removeItem("user_verified");
         localStorage.setItem("user_email", formData.email);
         localStorage.setItem("user_role", "student");
-        localStorage.setItem("redirect_to", "/workspace");
+        localStorage.setItem("redirect_to", "/auth/plan");
       }
       setTimeout(() => {
-        router.push(`/auth/verify?email=${encodeURIComponent(formData.email)}&role=student&redirectTo=/workspace`);
+        router.push(`/auth/verify?email=${encodeURIComponent(formData.email)}&role=student&redirectTo=/auth/plan`);
       }, 1200);
     }, 1200);
   };

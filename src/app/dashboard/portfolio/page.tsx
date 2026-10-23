@@ -64,9 +64,11 @@ interface PortfolioSummary {
 
 export default function PortfolioPage() {
   const router = useRouter();
+  const userId = getJourneyUserId();
   const [profile, setProfile] = useState<UserOnboardingProfile | null>(null);
   const [activeTab, setActiveTab] = useState<"overview" | "all" | "milestones" | "certificates" | "activity">("overview");
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [projects, setProjects] = useState<ProjectCardData[]>([]);
   const [summary, setSummary] = useState<PortfolioSummary>({
     projectsBuilt: 0,
@@ -77,25 +79,63 @@ export default function PortfolioPage() {
     skills: [],
   });
 
-  const userId = getJourneyUserId();
+  const activeRequestId = React.useRef(0);
+  const inFlightPromiseRef = React.useRef<Promise<void> | null>(null);
 
-  const fetchPortfolioData = useCallback(async () => {
-    try {
-      setLoading(true);
-      const res = await fetch(`/api/portfolio?userId=${encodeURIComponent(userId)}`);
-      if (res.ok) {
-        const data = await res.json();
-        setProjects(data.projects || []);
-        if (data.summary) {
-          setSummary(data.summary);
+  const fetchPortfolioData = useCallback(async (force = false) => {
+    // Deduplicate in-flight requests unless explicitly forced
+    if (!force && inFlightPromiseRef.current) {
+      return inFlightPromiseRef.current;
+    }
+
+    const reqId = ++activeRequestId.current;
+
+    const promise = (async () => {
+      try {
+        setLoading(true);
+        setError(null);
+
+        const headers: Record<string, string> = {};
+        if (typeof window !== "undefined") {
+          const token = localStorage.getItem("auth_token") || localStorage.getItem("token");
+          if (token) {
+            headers["Authorization"] = `Bearer ${token}`;
+          }
+        }
+
+        const res = await fetch("/api/portfolio", {
+          headers,
+          credentials: "same-origin",
+        });
+
+        // Discard stale or superseded responses
+        if (reqId !== activeRequestId.current) return;
+
+        if (res.ok) {
+          const data = await res.json();
+          setProjects(data.projects || []);
+          if (data.summary) {
+            setSummary(data.summary);
+          }
+        } else {
+          const errData = await res.json().catch(() => ({}));
+          setError(errData.error || "Unable to load portfolio.");
+        }
+      } catch (err: any) {
+        if (reqId === activeRequestId.current) {
+          setError(err.message || "Failed to load portfolio data.");
+        }
+      } finally {
+        if (reqId === activeRequestId.current) {
+          setLoading(false);
+          inFlightPromiseRef.current = null;
         }
       }
-    } catch (err) {
-      console.warn("Failed to fetch portfolio data:", err);
-    } finally {
-      setLoading(false);
-    }
-  }, [userId]);
+    })();
+
+    inFlightPromiseRef.current = promise;
+    return promise;
+  }, []);
 
   // Onboarding route guard & Initial Data Load
   useEffect(() => {
@@ -226,7 +266,7 @@ export default function PortfolioPage() {
           </div>
 
           <button
-            onClick={fetchPortfolioData}
+            onClick={() => fetchPortfolioData(true)}
             title="Reload Portfolio Data"
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-zinc-200 bg-zinc-50 hover:bg-zinc-100 text-zinc-600 text-xs font-mono transition-colors cursor-pointer"
           >
@@ -395,6 +435,21 @@ export default function PortfolioPage() {
                   <ArrowRight className="h-3.5 w-3.5" />
                 </button>
               </div>
+
+              {error && (
+                <div className="p-4 bg-red-50 border border-red-200 rounded-2xl flex items-center justify-between text-xs text-red-700">
+                  <div className="flex items-center gap-2">
+                    <span className="font-semibold">Error:</span>
+                    <span>{error}</span>
+                  </div>
+                  <button
+                    onClick={() => fetchPortfolioData(true)}
+                    className="px-3 py-1 bg-red-100 hover:bg-red-200 text-red-800 rounded-lg font-mono font-medium transition-colors cursor-pointer"
+                  >
+                    Retry
+                  </button>
+                </div>
+              )}
 
               {loading ? (
                 <div className="py-16 text-center bg-white border border-zinc-200 rounded-2xl">

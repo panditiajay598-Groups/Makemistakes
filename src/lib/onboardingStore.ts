@@ -72,6 +72,12 @@ export interface UserOnboardingProfile {
   completedAt?: string;
 }
 
+import {
+  getCachedParsedItem,
+  setCachedParsedItem,
+  removeCachedItem,
+} from "./storageCache";
+
 const STORAGE_KEY = "makemistakes_user_onboarding";
 
 const DEFAULT_PROFILE: UserOnboardingProfile = {
@@ -140,29 +146,25 @@ const DEFAULT_PROFILE: UserOnboardingProfile = {
   badges: ["Founding Candidate", "Associate Product Engineer"],
 };
 
-export function getOnboardingProfile(): UserOnboardingProfile {
+export function getOnboardingProfile(userEmail?: string): UserOnboardingProfile {
   if (typeof window === "undefined") {
     return DEFAULT_PROFILE;
   }
 
   try {
-    const email = localStorage.getItem("user_email")?.trim().toLowerCase();
+    const email = (userEmail || localStorage.getItem("user_email"))?.trim().toLowerCase();
     let emailData: any = null;
     let isEmailCompleted = false;
 
     if (email) {
       const emailStorageKey = `${STORAGE_KEY}_${email}`;
-      const rawEmailData = localStorage.getItem(emailStorageKey);
-      if (rawEmailData) {
-        emailData = JSON.parse(rawEmailData);
-      }
+      emailData = getCachedParsedItem<any>(emailStorageKey, null);
       if (localStorage.getItem(`user_onboarding_completed_${email}`) === "true") {
         isEmailCompleted = true;
       }
     }
 
-    const globalDataRaw = localStorage.getItem(STORAGE_KEY);
-    const globalData = globalDataRaw ? JSON.parse(globalDataRaw) : {};
+    const globalData = getCachedParsedItem<Partial<UserOnboardingProfile>>(STORAGE_KEY, {});
 
     const merged = {
       ...DEFAULT_PROFILE,
@@ -193,8 +195,12 @@ export function getOnboardingProfile(): UserOnboardingProfile {
   return DEFAULT_PROFILE;
 }
 
-export function saveOnboardingProfile(profile: Partial<UserOnboardingProfile>): UserOnboardingProfile {
-  const current = getOnboardingProfile();
+export function saveOnboardingProfile(
+  profile: Partial<UserOnboardingProfile>,
+  userEmail?: string
+): UserOnboardingProfile {
+  const email = (userEmail || (typeof window !== "undefined" ? localStorage.getItem("user_email") : null))?.trim().toLowerCase();
+  const current = getOnboardingProfile(email || undefined);
   const updated: UserOnboardingProfile = {
     ...current,
     ...profile,
@@ -218,10 +224,9 @@ export function saveOnboardingProfile(profile: Partial<UserOnboardingProfile>): 
 
   if (typeof window !== "undefined") {
     try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
-      const email = localStorage.getItem("user_email")?.trim().toLowerCase();
+      setCachedParsedItem(STORAGE_KEY, updated);
       if (email) {
-        localStorage.setItem(`${STORAGE_KEY}_${email}`, JSON.stringify(updated));
+        setCachedParsedItem(`${STORAGE_KEY}_${email}`, updated);
         if (updated.onboardingCompleted) {
           localStorage.setItem(`user_onboarding_completed_${email}`, "true");
         }
@@ -316,12 +321,12 @@ export function resetOnboardingForNewUser(): UserOnboardingProfile {
   if (typeof window !== "undefined") {
     try {
       const email = localStorage.getItem("user_email")?.trim().toLowerCase();
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(DEFAULT_PROFILE));
+      setCachedParsedItem(STORAGE_KEY, DEFAULT_PROFILE);
       if (email) {
-        localStorage.removeItem(`user_onboarding_completed_${email}`);
-        localStorage.removeItem(`${STORAGE_KEY}_${email}`);
+        removeCachedItem(`user_onboarding_completed_${email}`);
+        removeCachedItem(`${STORAGE_KEY}_${email}`);
       }
-      localStorage.removeItem("makemistakes_active_mission_session");
+      removeCachedItem("makemistakes_active_mission_session");
     } catch (e) {
       console.warn("Failed to reset onboarding profile in localStorage", e);
     }

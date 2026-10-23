@@ -21,6 +21,8 @@ import {
   Package,
   X,
   BookOpen,
+  ChevronLeft,
+  ChevronRight,
 } from "lucide-react";
 import { getOnboardingProfile, UserOnboardingProfile } from "@/lib/onboardingStore";
 import { getJourneyUserId } from "@/lib/journeyUser";
@@ -74,27 +76,40 @@ export default function ProductsPage() {
   const [selectedDifficulty, setSelectedDifficulty] = useState("All");
   const [sortOrder, setSortOrder] = useState("numerical_asc");
 
+  // Pagination State
+  const [currentPage, setCurrentPage] = useState(1);
+  const [pageSize, setPageSize] = useState(20);
+  const [totalCount, setTotalCount] = useState(0);
+  const [totalPages, setTotalPages] = useState(1);
+  const activeRequestId = React.useRef(0);
+
   // Detail Modal State
   const [selectedProduct, setSelectedProduct] = useState<ProductCatalogItem | null>(null);
 
   // Fetch product catalog from API
   const fetchProducts = useCallback(async () => {
+    const reqId = ++activeRequestId.current;
     try {
       setLoading(true);
       setError(null);
 
       const params = new URLSearchParams({
-        userId,
         search: searchQuery,
         category: selectedCategory,
         difficulty: selectedDifficulty,
         sort: sortOrder,
+        page: currentPage.toString(),
+        limit: pageSize.toString(),
       });
 
       const res = await fetch(`/api/products?${params.toString()}`);
+      if (reqId !== activeRequestId.current) return; // Stale request discarded
+
       if (res.ok) {
         const data = await res.json();
         setProducts(data.products || []);
+        if (typeof data.totalCount === "number") setTotalCount(data.totalCount);
+        if (typeof data.totalPages === "number") setTotalPages(data.totalPages);
         if (data.categories) setCategories(data.categories);
         if (data.difficulties) setDifficulties(data.difficulties);
         if (data.unlockProgress) setUnlockProgress(data.unlockProgress);
@@ -103,11 +118,20 @@ export default function ProductsPage() {
         setError(errData.error || "Unable to load problems catalog.");
       }
     } catch (err: any) {
-      setError(err.message || "Failed to connect to problem database.");
+      if (reqId === activeRequestId.current) {
+        setError(err.message || "Failed to connect to problem database.");
+      }
     } finally {
-      setLoading(false);
+      if (reqId === activeRequestId.current) {
+        setLoading(false);
+      }
     }
-  }, [userId, searchQuery, selectedCategory, selectedDifficulty, sortOrder]);
+  }, [searchQuery, selectedCategory, selectedDifficulty, sortOrder, currentPage, pageSize]);
+
+  const handlePageChange = (newPage: number) => {
+    if (newPage < 1 || newPage > totalPages || newPage === currentPage) return;
+    setCurrentPage(newPage);
+  };
 
   // Initial Onboarding Route Guard & Data Load
   useEffect(() => {
@@ -329,13 +353,19 @@ export default function ProductsPage() {
                 <input
                   type="text"
                   value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
+                  onChange={(e) => {
+                    setSearchQuery(e.target.value);
+                    setCurrentPage(1);
+                  }}
                   placeholder="Search products by Problem ID, Title, Description, or Category..."
                   className="w-full pl-10 pr-4 py-2.5 rounded-xl border border-zinc-200 bg-zinc-50 text-xs font-sans text-zinc-900 focus:outline-none focus:border-teal-700 transition-colors"
                 />
                 {searchQuery && (
                   <button
-                    onClick={() => setSearchQuery("")}
+                    onClick={() => {
+                      setSearchQuery("");
+                      setCurrentPage(1);
+                    }}
                     className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-zinc-600"
                   >
                     <X className="h-3.5 w-3.5" />
@@ -348,10 +378,13 @@ export default function ProductsPage() {
                 <div className="w-full sm:w-48">
                   <select
                     value={selectedCategory}
-                    onChange={(e) => setSelectedCategory(e.target.value)}
+                    onChange={(e) => {
+                      setSelectedCategory(e.target.value);
+                      setCurrentPage(1);
+                    }}
                     className="w-full px-3 py-2.5 rounded-xl border border-zinc-200 bg-zinc-50 text-xs font-mono text-zinc-800 focus:outline-none focus:border-teal-700 cursor-pointer"
                   >
-                    <option value="All">Category: All ({products.length})</option>
+                    <option value="All">Category: All ({totalCount || products.length})</option>
                     {categories.map((cat) => (
                       <option key={cat} value={cat}>
                         {cat}
@@ -366,7 +399,10 @@ export default function ProductsPage() {
                 <div className="w-full sm:w-44">
                   <select
                     value={selectedDifficulty}
-                    onChange={(e) => setSelectedDifficulty(e.target.value)}
+                    onChange={(e) => {
+                      setSelectedDifficulty(e.target.value);
+                      setCurrentPage(1);
+                    }}
                     className="w-full px-3 py-2.5 rounded-xl border border-zinc-200 bg-zinc-50 text-xs font-mono text-zinc-800 focus:outline-none focus:border-teal-700 cursor-pointer"
                   >
                     <option value="All">Difficulty: All</option>
@@ -383,7 +419,10 @@ export default function ProductsPage() {
               <div className="w-full sm:w-44">
                 <select
                   value={sortOrder}
-                  onChange={(e) => setSortOrder(e.target.value)}
+                  onChange={(e) => {
+                    setSortOrder(e.target.value);
+                    setCurrentPage(1);
+                  }}
                   className="w-full px-3 py-2.5 rounded-xl border border-zinc-200 bg-zinc-50 text-xs font-mono text-zinc-800 focus:outline-none focus:border-teal-700 cursor-pointer"
                 >
                   <option value="numerical_asc">Sort: P000001 → P...</option>
@@ -403,19 +442,19 @@ export default function ProductsPage() {
                 {searchQuery && (
                   <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-teal-50 border border-teal-100 text-teal-800 text-[11px] font-mono">
                     Search: &quot;{searchQuery}&quot;
-                    <X className="h-3 w-3 cursor-pointer" onClick={() => setSearchQuery("")} />
+                    <X className="h-3 w-3 cursor-pointer" onClick={() => { setSearchQuery(""); setCurrentPage(1); }} />
                   </span>
                 )}
                 {selectedCategory !== "All" && (
                   <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-teal-50 border border-teal-100 text-teal-800 text-[11px] font-mono">
                     Cat: {selectedCategory}
-                    <X className="h-3 w-3 cursor-pointer" onClick={() => setSelectedCategory("All")} />
+                    <X className="h-3 w-3 cursor-pointer" onClick={() => { setSelectedCategory("All"); setCurrentPage(1); }} />
                   </span>
                 )}
                 {selectedDifficulty !== "All" && (
                   <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-teal-50 border border-teal-100 text-teal-800 text-[11px] font-mono">
                     Diff: {selectedDifficulty}
-                    <X className="h-3 w-3 cursor-pointer" onClick={() => setSelectedDifficulty("All")} />
+                    <X className="h-3 w-3 cursor-pointer" onClick={() => { setSelectedDifficulty("All"); setCurrentPage(1); }} />
                   </span>
                 )}
 
@@ -424,6 +463,7 @@ export default function ProductsPage() {
                     setSearchQuery("");
                     setSelectedCategory("All");
                     setSelectedDifficulty("All");
+                    setCurrentPage(1);
                   }}
                   className="text-[11px] font-mono text-teal-700 underline font-semibold ml-auto cursor-pointer"
                 >
@@ -633,6 +673,102 @@ export default function ProductsPage() {
                   </div>
                 );
               })}
+            </div>
+          )}
+
+          {/* Pagination Controls */}
+          {products.length > 0 && totalPages > 1 && (
+            <div className="flex flex-col sm:flex-row items-center justify-between gap-4 pt-6 border-t border-zinc-200">
+              <div className="text-xs font-mono text-zinc-500">
+                Showing <span className="font-semibold text-zinc-800">{(currentPage - 1) * pageSize + 1}</span> to{" "}
+                <span className="font-semibold text-zinc-800">{Math.min(currentPage * pageSize, totalCount)}</span> of{" "}
+                <span className="font-semibold text-zinc-800">{totalCount}</span> problems
+              </div>
+
+              <div className="flex items-center gap-1.5 flex-wrap justify-center">
+                <button
+                  type="button"
+                  disabled={currentPage <= 1 || loading}
+                  onClick={() => handlePageChange(currentPage - 1)}
+                  className={`flex items-center gap-1 px-3 py-1.5 rounded-xl border text-xs font-mono font-semibold transition-all ${
+                    currentPage <= 1 || loading
+                      ? "border-zinc-200 text-zinc-300 cursor-not-allowed bg-zinc-50"
+                      : "border-zinc-200 text-zinc-700 hover:bg-zinc-100 hover:border-zinc-300 cursor-pointer bg-white"
+                  }`}
+                >
+                  <ChevronLeft className="h-3.5 w-3.5" />
+                  <span>Prev</span>
+                </button>
+
+                {(() => {
+                  const pages: (number | "...")[] = [];
+                  if (totalPages <= 7) {
+                    for (let i = 1; i <= totalPages; i++) pages.push(i);
+                  } else if (currentPage <= 4) {
+                    pages.push(1, 2, 3, 4, 5, "...", totalPages);
+                  } else if (currentPage >= totalPages - 3) {
+                    pages.push(1, "...", totalPages - 4, totalPages - 3, totalPages - 2, totalPages - 1, totalPages);
+                  } else {
+                    pages.push(1, "...", currentPage - 1, currentPage, currentPage + 1, "...", totalPages);
+                  }
+                  return pages.map((p, idx) => {
+                    if (p === "...") {
+                      return (
+                        <span key={`ellipsis-${idx}`} className="px-2 py-1 text-xs font-mono text-zinc-400">
+                          ...
+                        </span>
+                      );
+                    }
+                    const isCurrent = p === currentPage;
+                    return (
+                      <button
+                        key={p}
+                        type="button"
+                        disabled={loading}
+                        onClick={() => handlePageChange(p as number)}
+                        className={`h-8 w-8 rounded-xl text-xs font-mono font-semibold transition-all ${
+                          isCurrent
+                            ? "bg-teal-800 text-white shadow-xs"
+                            : "bg-white border border-zinc-200 text-zinc-700 hover:bg-zinc-100 cursor-pointer"
+                        }`}
+                      >
+                        {p}
+                      </button>
+                    );
+                  });
+                })()}
+
+                <button
+                  type="button"
+                  disabled={currentPage >= totalPages || loading}
+                  onClick={() => handlePageChange(currentPage + 1)}
+                  className={`flex items-center gap-1 px-3 py-1.5 rounded-xl border text-xs font-mono font-semibold transition-all ${
+                    currentPage >= totalPages || loading
+                      ? "border-zinc-200 text-zinc-300 cursor-not-allowed bg-zinc-50"
+                      : "border-zinc-200 text-zinc-700 hover:bg-zinc-100 hover:border-zinc-300 cursor-pointer bg-white"
+                  }`}
+                >
+                  <span>Next</span>
+                  <ChevronRight className="h-3.5 w-3.5" />
+                </button>
+              </div>
+
+              {/* Page size dropdown */}
+              <div className="flex items-center gap-2 text-xs font-mono text-zinc-500">
+                <span>Per page:</span>
+                <select
+                  value={pageSize}
+                  onChange={(e) => {
+                    setPageSize(Number(e.target.value));
+                    setCurrentPage(1);
+                  }}
+                  className="px-2.5 py-1 rounded-lg border border-zinc-200 bg-white text-zinc-700 focus:outline-none focus:border-teal-700 cursor-pointer"
+                >
+                  <option value={20}>20</option>
+                  <option value={50}>50</option>
+                  <option value={100}>100</option>
+                </select>
+              </div>
             </div>
           )}
         </main>

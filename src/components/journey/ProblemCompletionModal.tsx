@@ -2,6 +2,7 @@
 
 import React, { useEffect, useState } from "react";
 import { CheckCircle2, ArrowRight, Trophy, Sparkles, FolderCheck } from "lucide-react";
+import { formatProblemLabel } from "@/lib/problemId";
 
 interface ProblemCompletionModalProps {
   completedProblem: {
@@ -30,15 +31,6 @@ export default function ProblemCompletionModal({
   const isAllCompleted = !nextProblem;
   const [secondsLeft, setSecondsLeft] = useState(autoStartSeconds);
 
-  const getProblemNumberLabel = (pid?: string) => {
-    if (!pid) return "Problem";
-    const numMatch = pid.match(/\d+/);
-    if (numMatch) {
-      const numInt = parseInt(numMatch[0], 10);
-      return `Problem ${numInt < 10 ? `0${numInt}` : numInt}`;
-    }
-    return pid;
-  };
 
   // Auto-advance to next problem after a short celebration
   useEffect(() => {
@@ -89,7 +81,7 @@ export default function ProblemCompletionModal({
             </h2>
             <div className="w-full bg-zinc-50 border border-zinc-200/80 rounded-2xl p-4 text-center space-y-1">
               <span className="text-[10px] font-mono font-semibold text-zinc-400 uppercase tracking-wider block">
-                {getProblemNumberLabel(completedProblem.problemId)}
+                {formatProblemLabel(completedProblem.problemId)}
               </span>
               <h3 className="text-sm sm:text-base font-bold text-zinc-900 leading-snug">
                 {completedProblem.title}
@@ -123,7 +115,7 @@ export default function ProblemCompletionModal({
                       Next challenge
                     </p>
                     <p className="text-[11px] font-mono text-zinc-400">
-                      {getProblemNumberLabel(nextProblem.problemId)}
+                      {formatProblemLabel(nextProblem.problemId)}
                     </p>
                   </div>
                 </div>
