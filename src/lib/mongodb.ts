@@ -1,8 +1,9 @@
-import { MongoClient, type Db, type MongoClientOptions } from "mongodb";
 import { initDns } from "./dns";
 
-// Ensure DNS is configured for MongoDB Atlas SRV record resolution
+// Ensure DNS is configured for MongoDB Atlas SRV record resolution prior to driver initialization
 initDns();
+
+import { MongoClient, type Db, type MongoClientOptions } from "mongodb";
 
 
 interface MongoCache {
@@ -61,10 +62,29 @@ export async function getMongoClient(): Promise<MongoClient> {
 
   if (!cache.promise) {
     cache.uri = uri;
-    const client = new MongoClient(uri, mongoOptions);
+    const connectWithFallback = async (): Promise<MongoClient> => {
+      try {
+        const client = new MongoClient(uri, mongoOptions);
+        return await client.connect();
+      } catch (err: any) {
+        // Fallback for Windows local development when ISP/router blocks Atlas SRV DNS queries
+        if (
+          (err?.code === "ECONNREFUSED" || err?.message?.includes("querySrv ECONNREFUSED")) &&
+          uri.includes("cluster0.r8egjr5.mongodb.net")
+        ) {
+          const userPassMatch = uri.match(/mongodb\+srv:\/\/([^@]+)@/);
+          if (userPassMatch) {
+            const creds = userPassMatch[1];
+            const seedUri = `mongodb://${creds}@ac-auvx5mt-shard-00-00.r8egjr5.mongodb.net:27017,ac-auvx5mt-shard-00-01.r8egjr5.mongodb.net:27017,ac-auvx5mt-shard-00-02.r8egjr5.mongodb.net:27017/makemistakes?ssl=true&authSource=admin&replicaSet=atlas-88c9r5-shard-0&retryWrites=true&w=majority`;
+            const fallbackClient = new MongoClient(seedUri, mongoOptions);
+            return await fallbackClient.connect();
+          }
+        }
+        throw err;
+      }
+    };
 
-    cache.promise = client
-      .connect()
+    cache.promise = connectWithFallback()
       .then((connectedClient) => {
         cache.client = connectedClient;
         return connectedClient;

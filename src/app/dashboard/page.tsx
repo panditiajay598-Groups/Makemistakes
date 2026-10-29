@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
   LayoutDashboard,
-  Map,
+  Map as MapIcon,
   Globe,
   ShieldCheck,
   Settings,
@@ -68,7 +68,9 @@ export default function BuildOSPage() {
   const [activeTab, setActiveTab] = useState("buildos");
 
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [loadMoreError, setLoadMoreError] = useState<string | null>(null);
   const [products, setProducts] = useState<ProductCatalogItem[]>([]);
   const [categories, setCategories] = useState<string[]>([]);
   const [difficulties, setDifficulties] = useState<string[]>([]);
@@ -79,13 +81,34 @@ export default function BuildOSPage() {
   const [selectedCategory, setSelectedCategory] = useState("All");
   const [selectedDifficulty, setSelectedDifficulty] = useState("All");
 
-  // Pagination State
+  // Main scroll container ref for auto-scrolling to top on page change
+  const mainContentRef = React.useRef<HTMLDivElement>(null);
+
+  // Pagination State (20 items per page)
   const [currentPage, setCurrentPage] = useState(1);
-  const [pageSize, setPageSize] = useState(20);
+  const [pageSize] = useState(20);
   const [totalCount, setTotalCount] = useState(0);
   const [totalPages, setTotalPages] = useState(1);
+  const [hasMore, setHasMore] = useState(false);
   const [userMetrics, setUserMetrics] = useState<{ inProgressCount: number; completedCount: number } | null>(null);
   const activeRequestId = React.useRef(0);
+
+  // Client-side In-Memory Page Cache for 0-buffering instant transitions
+  const pageCacheRef = React.useRef<
+    Map<
+      string,
+      {
+        products: ProductCatalogItem[];
+        totalCount: number;
+        totalPages: number;
+        hasMore: boolean;
+        categories?: string[];
+        difficulties?: string[];
+        unlockProgress?: any;
+        userMetrics?: any;
+      }
+    >
+  >(new Map());
 
   // Selected detail modal
   const [selectedProduct, setSelectedProduct] = useState<ProductCatalogItem | null>(null);
@@ -99,62 +122,179 @@ export default function BuildOSPage() {
     }
   }, [router]);
 
-  // Fetch problem statements from database API
-  const fetchProducts = useCallback(async () => {
-    const reqId = ++activeRequestId.current;
-    try {
-      setLoading(true);
-      setError(null);
+  const getCacheKey = useCallback(
+    (page: number) => {
+      return `${searchQuery}_${selectedCategory}_${selectedDifficulty}_p${page}`;
+    },
+    [searchQuery, selectedCategory, selectedDifficulty]
+  );
 
-      const params = new URLSearchParams({
-        search: searchQuery,
-        category: selectedCategory,
-        difficulty: selectedDifficulty,
-        sort: "numerical_asc",
-        page: currentPage.toString(),
-        limit: pageSize.toString(),
-      });
+  // Background Prefetcher: fetches adjacent pages ahead of time so page clicks have 0 buffering
+  const prefetchPage = useCallback(
+    async (pageToPrefetch: number) => {
+      if (pageToPrefetch < 1) return;
+      const key = getCacheKey(pageToPrefetch);
+      if (pageCacheRef.current.has(key)) return;
 
-      const res = await fetch(`/api/products?${params.toString()}`);
-      if (reqId !== activeRequestId.current) return;
+      try {
+        const params = new URLSearchParams({
+          search: searchQuery,
+          category: selectedCategory,
+          difficulty: selectedDifficulty,
+          sort: "numerical_asc",
+          page: pageToPrefetch.toString(),
+          limit: "20",
+        });
 
-      if (res.ok) {
-        const data = await res.json();
-        setProducts(data.products || []);
-        if (typeof data.totalCount === "number") setTotalCount(data.totalCount);
-        if (typeof data.totalPages === "number") setTotalPages(data.totalPages);
-        if (data.categories) setCategories(data.categories);
-        if (data.difficulties) setDifficulties(data.difficulties);
-        if (data.unlockProgress) setUnlockProgress(data.unlockProgress);
-        if (data.userMetrics) setUserMetrics(data.userMetrics);
-      } else {
-        const errData = await res.json().catch(() => ({}));
-        setError(errData.error || "Failed to load problem statements from database.");
+        const res = await fetch(`/api/products?${params.toString()}`);
+        if (res.ok) {
+          const data = await res.json();
+          const items: ProductCatalogItem[] = data.products || data.data || [];
+          pageCacheRef.current.set(key, {
+            products: items,
+            totalCount: data.totalCount ?? 0,
+            totalPages: data.totalPages ?? 1,
+            hasMore: data.hasMore ?? false,
+            categories: data.categories,
+            difficulties: data.difficulties,
+            unlockProgress: data.unlockProgress,
+            userMetrics: data.userMetrics,
+          });
+        }
+      } catch {
+        // Silently ignore prefetch failures in background
       }
-    } catch (err: any) {
-      if (reqId === activeRequestId.current) {
-        console.error("Error fetching problems:", err);
-        setError("Network error while loading problem statements.");
-      }
-    } finally {
-      if (reqId === activeRequestId.current) {
+    },
+    [getCacheKey, searchQuery, selectedCategory, selectedDifficulty]
+  );
+
+  // Page Navigator: displays next/previous 20 items with 0 buffering from cache
+  const loadPage = useCallback(
+    async (targetPage: number) => {
+      const key = getCacheKey(targetPage);
+      const cached = pageCacheRef.current.get(key);
+
+      // Instant 0-buffering transition if cached
+      if (cached) {
+        setProducts(cached.products);
+        setCurrentPage(targetPage);
+        setTotalCount(cached.totalCount);
+        setTotalPages(cached.totalPages);
+        setHasMore(cached.hasMore);
         setLoading(false);
+        setError(null);
+        mainContentRef.current?.scrollTo({ top: 0, behavior: "smooth" });
+
+        // Trigger background prefetch for adjacent pages
+        if (targetPage + 1 <= cached.totalPages) {
+          prefetchPage(targetPage + 1);
+        }
+        if (targetPage > 1) {
+          prefetchPage(targetPage - 1);
+        }
+        return;
       }
+
+      // Fetch if not yet in cache
+      const reqId = ++activeRequestId.current;
+      try {
+        setLoading(true);
+        setError(null);
+
+        const params = new URLSearchParams({
+          search: searchQuery,
+          category: selectedCategory,
+          difficulty: selectedDifficulty,
+          sort: "numerical_asc",
+          page: targetPage.toString(),
+          limit: "20",
+        });
+
+        const res = await fetch(`/api/products?${params.toString()}`);
+        if (reqId !== activeRequestId.current) return;
+
+        if (res.ok) {
+          const data = await res.json();
+          const items: ProductCatalogItem[] = data.products || data.data || [];
+          const count = typeof data.totalCount === "number" ? data.totalCount : 0;
+          const pages = typeof data.totalPages === "number" ? data.totalPages : Math.ceil(count / 20) || 1;
+          const more =
+            typeof data.hasMore === "boolean"
+              ? data.hasMore
+              : typeof data.pagination?.hasMore === "boolean"
+              ? data.pagination.hasMore
+              : targetPage < pages;
+
+          // Store in cache for future instant navigation
+          pageCacheRef.current.set(key, {
+            products: items,
+            totalCount: count,
+            totalPages: pages,
+            hasMore: more,
+            categories: data.categories,
+            difficulties: data.difficulties,
+            unlockProgress: data.unlockProgress,
+            userMetrics: data.userMetrics,
+          });
+
+          setProducts(items);
+          setCurrentPage(targetPage);
+          setTotalCount(count);
+          setTotalPages(pages);
+          setHasMore(more);
+          if (data.categories) setCategories(data.categories);
+          if (data.difficulties) setDifficulties(data.difficulties);
+          if (data.unlockProgress) setUnlockProgress(data.unlockProgress);
+          if (data.userMetrics) setUserMetrics(data.userMetrics);
+
+          mainContentRef.current?.scrollTo({ top: 0, behavior: "smooth" });
+
+          // Prefetch adjacent pages in background
+          if (targetPage + 1 <= pages) {
+            prefetchPage(targetPage + 1);
+          }
+          if (targetPage > 1) {
+            prefetchPage(targetPage - 1);
+          }
+        } else {
+          const errData = await res.json().catch(() => ({}));
+          setError(errData.error || "Failed to load problem statements from database.");
+        }
+      } catch (err: any) {
+        if (reqId === activeRequestId.current) {
+          console.error("Error fetching problems:", err);
+          setError("Network error while loading problem statements.");
+        }
+      } finally {
+        if (reqId === activeRequestId.current) {
+          setLoading(false);
+        }
+      }
+    },
+    [getCacheKey, prefetchPage, searchQuery, selectedCategory, selectedDifficulty]
+  );
+
+  const handlePrevPage = useCallback(() => {
+    if (currentPage > 1 && !loading) {
+      loadPage(currentPage - 1);
     }
-  }, [searchQuery, selectedCategory, selectedDifficulty, currentPage, pageSize]);
+  }, [currentPage, loading, loadPage]);
 
-  const handlePageChange = (newPage: number) => {
-    if (newPage < 1 || newPage > totalPages || newPage === currentPage) return;
-    setCurrentPage(newPage);
-  };
+  const handleNextPage = useCallback(() => {
+    if (currentPage < totalPages && !loading) {
+      loadPage(currentPage + 1);
+    }
+  }, [currentPage, totalPages, loading, loadPage]);
 
+  // Initial load and filter change trigger
   useEffect(() => {
-    fetchProducts();
-  }, [fetchProducts]);
+    pageCacheRef.current.clear();
+    loadPage(1);
+  }, [loadPage]);
 
   const navItems = [
     { id: "buildos",   label: "BuildOS",          icon: LayoutDashboard, href: "/dashboard" },
-    { id: "journey",   label: "Product Journey",  icon: Map,             href: "/dashboard/journey" },
+    { id: "journey",   label: "Product Journey",  icon: MapIcon,         href: "/dashboard/journey" },
     { id: "products",  label: "Products",          icon: Globe,           href: "/dashboard/products" },
     { id: "portfolio", label: "Portfolio",         icon: ShieldCheck,     href: "/dashboard/portfolio" },
     { id: "settings",  label: "Settings",          icon: Settings,        href: "/dashboard/settings" },
@@ -233,7 +373,7 @@ export default function BuildOSPage() {
       {/* ================================================================ */}
       {/* MAIN CONTENT                                                       */}
       {/* ================================================================ */}
-      <div className="flex-1 flex flex-col min-w-0 h-full overflow-y-auto">
+      <div ref={mainContentRef} className="flex-1 flex flex-col min-w-0 h-full overflow-y-auto">
 
         {/* Top Header */}
         <header className="h-14 border-b border-zinc-200 bg-white px-7 flex items-center justify-between shrink-0 sticky top-0 z-20">
@@ -388,7 +528,10 @@ export default function BuildOSPage() {
               </select>
 
               <button
-                onClick={fetchProducts}
+                onClick={() => {
+                  pageCacheRef.current.clear();
+                  loadPage(currentPage);
+                }}
                 title="Refresh library"
                 className="p-2 rounded-xl bg-zinc-50 hover:bg-zinc-100 border border-zinc-200 text-zinc-500 hover:text-zinc-800 transition-colors cursor-pointer shrink-0"
               >
@@ -516,7 +659,17 @@ export default function BuildOSPage() {
 
                       {/* Card Title & Statement */}
                       <div>
-                        <h4 className="font-serif font-bold text-base text-zinc-900 tracking-tight leading-snug group-hover:text-teal-800 transition-colors">
+                        <h4
+                          onClick={() => {
+                            if (!isLocked) {
+                              const step = product.currentPhase || 1;
+                              router.push(`/journey/${product.problemId}?step=${step}`);
+                            }
+                          }}
+                          className={`font-serif font-bold text-base text-zinc-900 tracking-tight leading-snug group-hover:text-teal-800 transition-colors ${
+                            !isLocked ? "cursor-pointer" : ""
+                          }`}
+                        >
                           {product.title}
                         </h4>
                         <p className="mt-2 text-xs text-zinc-600 leading-relaxed line-clamp-3">
@@ -610,98 +763,62 @@ export default function BuildOSPage() {
             </div>
           )}
 
-          {/* Pagination Controls */}
-          {products.length > 0 && totalPages > 1 && (
-            <div className="flex flex-col sm:flex-row items-center justify-between gap-4 pt-6 border-t border-zinc-200">
-              <div className="text-xs font-mono text-zinc-500">
-                Showing <span className="font-semibold text-zinc-800">{(currentPage - 1) * pageSize + 1}</span> to{" "}
-                <span className="font-semibold text-zinc-800">{Math.min(currentPage * pageSize, totalCount)}</span> of{" "}
-                <span className="font-semibold text-zinc-800">{totalCount}</span> statements
-              </div>
+          {/* Instant Page-by-Page Pagination Controls */}
+          {products.length > 0 && (
+            <div className="pt-6 border-t border-zinc-200">
+              <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
+                {/* Statements Counter Status */}
+                <div className="text-xs font-mono text-zinc-500">
+                  Showing{" "}
+                  <span className="font-semibold text-zinc-900">
+                    {totalCount > 0 ? (currentPage - 1) * pageSize + 1 : 0}
+                  </span>
+                  –
+                  <span className="font-semibold text-zinc-900">
+                    {Math.min(currentPage * pageSize, totalCount || products.length)}
+                  </span>{" "}
+                  of <span className="font-semibold text-zinc-900">{totalCount || products.length}</span> statements
+                </div>
 
-              <div className="flex items-center gap-1.5 flex-wrap justify-center">
-                <button
-                  type="button"
-                  disabled={currentPage <= 1 || loading}
-                  onClick={() => handlePageChange(currentPage - 1)}
-                  className={`flex items-center gap-1 px-3 py-1.5 rounded-xl border text-xs font-mono font-semibold transition-all ${
-                    currentPage <= 1 || loading
-                      ? "border-zinc-200 text-zinc-300 cursor-not-allowed bg-zinc-50"
-                      : "border-zinc-200 text-zinc-700 hover:bg-zinc-100 hover:border-zinc-300 cursor-pointer bg-white"
-                  }`}
-                >
-                  <ChevronLeft className="h-3.5 w-3.5" />
-                  <span>Prev</span>
-                </button>
+                {/* Page Navigation Controls */}
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    id="dashboard-prev-btn"
+                    disabled={currentPage <= 1 || loading}
+                    onClick={handlePrevPage}
+                    title="Go to previous page"
+                    className={`inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl border text-xs font-mono font-semibold transition-all ${
+                      currentPage <= 1 || loading
+                        ? "border-zinc-200 text-zinc-300 cursor-not-allowed bg-zinc-50"
+                        : "border-zinc-300 text-zinc-700 hover:bg-zinc-100 hover:border-zinc-400 cursor-pointer bg-white shadow-xs"
+                    }`}
+                  >
+                    <ChevronLeft className="h-3.5 w-3.5" />
+                    <span>Previous</span>
+                  </button>
 
-                {(() => {
-                  const pages: (number | "...")[] = [];
-                  if (totalPages <= 7) {
-                    for (let i = 1; i <= totalPages; i++) pages.push(i);
-                  } else if (currentPage <= 4) {
-                    pages.push(1, 2, 3, 4, 5, "...", totalPages);
-                  } else if (currentPage >= totalPages - 3) {
-                    pages.push(1, "...", totalPages - 4, totalPages - 3, totalPages - 2, totalPages - 1, totalPages);
-                  } else {
-                    pages.push(1, "...", currentPage - 1, currentPage, currentPage + 1, "...", totalPages);
-                  }
-                  return pages.map((p, idx) => {
-                    if (p === "...") {
-                      return (
-                        <span key={`ellipsis-${idx}`} className="px-2 py-1 text-xs font-mono text-zinc-400">
-                          ...
-                        </span>
-                      );
-                    }
-                    const isCurrent = p === currentPage;
-                    return (
-                      <button
-                        key={p}
-                        type="button"
-                        disabled={loading}
-                        onClick={() => handlePageChange(p as number)}
-                        className={`h-8 w-8 rounded-xl text-xs font-mono font-semibold transition-all ${
-                          isCurrent
-                            ? "bg-teal-800 text-white shadow-xs"
-                            : "bg-white border border-zinc-200 text-zinc-700 hover:bg-zinc-100 cursor-pointer"
-                        }`}
-                      >
-                        {p}
-                      </button>
-                    );
-                  });
-                })()}
+                  <div className="px-3.5 py-2 rounded-xl bg-zinc-100 border border-zinc-200 text-xs font-mono font-medium text-zinc-700">
+                    Page <span className="font-bold text-zinc-900">{currentPage}</span> of{" "}
+                    <span className="font-bold text-zinc-900">{totalPages || 1}</span>
+                  </div>
 
-                <button
-                  type="button"
-                  disabled={currentPage >= totalPages || loading}
-                  onClick={() => handlePageChange(currentPage + 1)}
-                  className={`flex items-center gap-1 px-3 py-1.5 rounded-xl border text-xs font-mono font-semibold transition-all ${
-                    currentPage >= totalPages || loading
-                      ? "border-zinc-200 text-zinc-300 cursor-not-allowed bg-zinc-50"
-                      : "border-zinc-200 text-zinc-700 hover:bg-zinc-100 hover:border-zinc-300 cursor-pointer bg-white"
-                  }`}
-                >
-                  <span>Next</span>
-                  <ChevronRight className="h-3.5 w-3.5" />
-                </button>
-              </div>
-
-              {/* Page size dropdown */}
-              <div className="flex items-center gap-2 text-xs font-mono text-zinc-500">
-                <span>Per page:</span>
-                <select
-                  value={pageSize}
-                  onChange={(e) => {
-                    setPageSize(Number(e.target.value));
-                    setCurrentPage(1);
-                  }}
-                  className="px-2.5 py-1 rounded-lg border border-zinc-200 bg-white text-zinc-700 focus:outline-none focus:border-teal-700 cursor-pointer"
-                >
-                  <option value={20}>20</option>
-                  <option value={50}>50</option>
-                  <option value={100}>100</option>
-                </select>
+                  <button
+                    type="button"
+                    id="dashboard-next-btn"
+                    disabled={currentPage >= totalPages || !hasMore || loading}
+                    onClick={handleNextPage}
+                    title="Go to next page"
+                    className={`inline-flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-mono font-semibold transition-all ${
+                      currentPage >= totalPages || !hasMore || loading
+                        ? "border border-zinc-200 text-zinc-300 cursor-not-allowed bg-zinc-50"
+                        : "bg-teal-800 hover:bg-teal-700 text-white shadow-sm hover:shadow cursor-pointer border border-teal-800"
+                    }`}
+                  >
+                    <span>Next</span>
+                    <ChevronRight className="h-3.5 w-3.5" />
+                  </button>
+                </div>
               </div>
             </div>
           )}

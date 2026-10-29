@@ -57,10 +57,13 @@ export function initDns(): DnsConfigStatus {
     return cachedStatus;
   }
 
-  // If already configured and current servers are not loopback-only, return cached status
+  // If already configured with target servers, return cached status
   const currentServers = dns.getServers();
-  const isLoopbackOnly = currentServers.every((s) => s.startsWith("127.") || s === "::1");
-  if (globalThis.__dnsConfigured && cachedStatus && !isLoopbackOnly) {
+  const alreadyConfigured =
+    globalThis.__dnsConfigured &&
+    cachedStatus &&
+    DEFAULT_DNS_SERVERS.some((s) => currentServers.includes(s));
+  if (alreadyConfigured && cachedStatus) {
     return cachedStatus;
   }
 
@@ -75,6 +78,9 @@ export function initDns(): DnsConfigStatus {
       : DEFAULT_DNS_SERVERS;
 
   try {
+    if (typeof (dns as any).setDefaultResultOrder === "function") {
+      (dns as any).setDefaultResultOrder("ipv4first");
+    }
     dns.setServers(targetServers);
     globalThis.__dnsConfigured = true;
     cachedStatus = {

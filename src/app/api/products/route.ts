@@ -39,10 +39,34 @@ export async function GET(req: Request) {
     const rawPage = parseInt(searchParams.get("page") || "1", 10);
     const page = Number.isFinite(rawPage) && rawPage > 0 ? rawPage : 1;
 
-    const rawLimit = parseInt(searchParams.get("limit") || "20", 10);
-    const limit = Number.isFinite(rawLimit) && rawLimit > 0 ? Math.min(100, rawLimit) : 20;
+    const hasLimitParam = searchParams.has("limit");
+    const rawLimit = parseInt(searchParams.get("limit") || "", 10);
+    let limit: number;
+    if (hasLimitParam && Number.isFinite(rawLimit) && rawLimit > 0) {
+      limit = Math.min(100, rawLimit);
+    } else {
+      // Default initial request (page 1) to 20 records, subsequent requests without explicit limit to 10 records
+      limit = page === 1 ? 20 : 10;
+    }
 
-    const skip = (page - 1) * limit;
+    // Support optional cursor / explicit skip / offset
+    const rawSkipParam = searchParams.get("skip") ?? searchParams.get("offset");
+    let skip: number;
+    if (rawSkipParam !== null) {
+      const parsedSkip = parseInt(rawSkipParam, 10);
+      skip = Number.isFinite(parsedSkip) && parsedSkip >= 0 ? parsedSkip : 0;
+    } else {
+      if (page === 1) {
+        skip = 0;
+      } else if (hasLimitParam && limit !== 10) {
+        // Explicit custom fixed page size (e.g. limit=20, limit=50)
+        skip = (page - 1) * limit;
+      } else {
+        // Incremental pagination: initial load (page 1) loads 20 items (0..19),
+        // each subsequent page loads 10 items (page 2 -> skip 20, page 3 -> skip 30, etc.)
+        skip = 20 + (page - 2) * limit;
+      }
+    }
 
     if (!process.env.DATABASE_URL) {
       return applyNoStoreHeaders(
@@ -108,7 +132,8 @@ export async function GET(req: Request) {
     }
 
     // Execute queries in parallel: unlock evaluation (using shared engine), total count, paginated slice
-    const [unlockData, totalCount, rawProblems] = await Promise.all([
+    // Fetch limit + 1 items to determine with exact precision whether another page exists
+    const [unlockData, totalCount, rawProblemsWithExtra] = await Promise.all([
       evaluateUserUnlock(db, hasAuthSession ? userFilter : null),
       problemsCollection.countDocuments(query),
       problemsCollection
@@ -117,9 +142,12 @@ export async function GET(req: Request) {
         })
         .sort(sortObj)
         .skip(skip)
-        .limit(limit)
+        .limit(limit + 1)
         .toArray(),
     ]);
+
+    const hasMore = rawProblemsWithExtra.length > limit;
+    const rawProblems = hasMore ? rawProblemsWithExtra.slice(0, limit) : rawProblemsWithExtra;
 
     const {
       catalogMeta,
@@ -183,8 +211,14 @@ export async function GET(req: Request) {
       };
     });
 
-    const totalPages = Math.ceil(totalCount / limit) || 1;
-    const hasMore = page < totalPages;
+    let totalPages = 1;
+    if (totalCount > 0) {
+      if (hasLimitParam && limit !== 10) {
+        totalPages = Math.ceil(totalCount / limit) || 1;
+      } else {
+        totalPages = totalCount <= 20 ? 1 : 1 + Math.ceil((totalCount - 20) / 10);
+      }
+    }
 
     const response = NextResponse.json({
       success: true,
@@ -195,6 +229,14 @@ export async function GET(req: Request) {
       totalPages,
       hasMore,
       products,
+      data: products,
+      pagination: {
+        page,
+        limit,
+        totalCount,
+        totalPages,
+        hasMore,
+      },
       categories: catalogMeta.categories,
       difficulties: catalogMeta.difficulties,
       unlockProgress,
