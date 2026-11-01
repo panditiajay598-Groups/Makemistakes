@@ -29,6 +29,11 @@ import {
 } from "lucide-react";
 import { getOnboardingProfile, UserOnboardingProfile } from "@/lib/onboardingStore";
 import { getJourneyUserId } from "@/lib/journeyUser";
+import {
+  saveProblemsToCache,
+  getCachedProblemsPage,
+  saveCatalogMeta,
+} from "@/lib/problemIndexedDb";
 
 interface ProductCatalogItem {
   problemId: string;
@@ -60,6 +65,134 @@ interface UnlockProgress {
   advancedUnlocked: boolean;
 }
 
+interface DashboardProblemCardProps {
+  product: ProductCatalogItem;
+  onSelect: (product: ProductCatalogItem) => void;
+  onStartOrContinue: (product: ProductCatalogItem) => void;
+}
+
+/**
+ * Memoized Dashboard Problem Card
+ * Prevents re-rendering of existing cards when appending batches.
+ */
+const DashboardProblemCard = React.memo(function DashboardProblemCard({
+  product,
+  onSelect,
+  onStartOrContinue,
+}: DashboardProblemCardProps) {
+  const isLocked = product.isLocked;
+  const isInProgress = product.userStatus === "in_progress";
+  const isCompleted = product.userStatus === "completed";
+
+  return (
+    <div
+      key={product.problemId}
+      className={`bg-white border rounded-2xl p-6 flex flex-col justify-between transition-all duration-200 relative group hover:shadow-lg ${
+        isLocked
+          ? "border-zinc-200 bg-zinc-50/50 opacity-90"
+          : isInProgress
+          ? "border-teal-300 shadow-md shadow-teal-500/5 ring-1 ring-teal-500/20"
+          : isCompleted
+          ? "border-emerald-200 bg-emerald-50/10"
+          : "border-zinc-200 hover:border-teal-200"
+      }`}
+    >
+      <div className="space-y-4">
+        {/* Card Top Badges */}
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2">
+            <span className="text-[11px] font-mono font-bold bg-teal-50 border border-teal-100 text-teal-800 px-2.5 py-0.5 rounded-md">
+              {product.problemId}
+            </span>
+            {product.category && (
+              <span className="text-[11px] font-mono text-zinc-600 bg-zinc-100 px-2 py-0.5 rounded-md truncate max-w-[120px]">
+                {product.category}
+              </span>
+            )}
+          </div>
+
+          {/* Difficulty Badge */}
+          {product.difficulty && (
+            <span
+              className={`text-[10px] font-mono font-bold px-2 py-0.5 rounded-md border ${
+                product.difficulty === "Beginner"
+                  ? "bg-emerald-50 text-emerald-800 border-emerald-200"
+                  : product.difficulty === "Intermediate"
+                  ? "bg-amber-50 text-amber-800 border-amber-200"
+                  : "bg-purple-50 text-purple-800 border-purple-200"
+              }`}
+            >
+              {product.difficulty}
+            </span>
+          )}
+        </div>
+
+        {/* Card Title & Statement */}
+        <div className="space-y-1.5">
+          <h4
+            onClick={() => {
+              if (!isLocked) onStartOrContinue(product);
+            }}
+            className={`font-serif font-bold text-base text-zinc-900 group-hover:text-teal-800 transition-colors line-clamp-1 ${
+              !isLocked ? "cursor-pointer" : ""
+            }`}
+          >
+            {product.title}
+          </h4>
+          <p className="text-xs text-zinc-600 font-sans leading-relaxed line-clamp-3">
+            {product.problemStatement || product.description}
+          </p>
+        </div>
+
+        {/* Context info tag */}
+        {product.country && (
+          <div className="text-[11px] font-mono text-zinc-500 flex items-center gap-1.5">
+            <span>📍 {product.country}</span>
+            {product.estimatedHours && <span>• ~{product.estimatedHours}h effort</span>}
+          </div>
+        )}
+      </div>
+
+      {/* Card Footer Actions */}
+      <div className="pt-5 border-t border-zinc-100 flex items-center justify-between gap-2 mt-4">
+        <button
+          type="button"
+          onClick={() => onSelect(product)}
+          className="text-xs font-mono font-semibold text-zinc-600 hover:text-zinc-900 px-3 py-2 rounded-xl bg-zinc-50 hover:bg-zinc-100 border border-zinc-200 transition-colors cursor-pointer"
+        >
+          View Details
+        </button>
+
+        <button
+          type="button"
+          disabled={isLocked}
+          onClick={() => onStartOrContinue(product)}
+          className={`inline-flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-sans font-semibold transition-all ${
+            isLocked
+              ? "bg-zinc-100 text-zinc-400 cursor-not-allowed border border-zinc-200"
+              : isInProgress
+              ? "bg-amber-600 hover:bg-amber-700 text-white shadow-sm"
+              : isCompleted
+              ? "bg-emerald-700 hover:bg-emerald-800 text-white shadow-sm"
+              : "bg-teal-800 hover:bg-teal-700 text-white shadow-sm"
+          }`}
+        >
+          <span>
+            {isLocked
+              ? "🔒 Locked"
+              : isInProgress
+              ? "Continue"
+              : isCompleted
+              ? "Review"
+              : "Start Building"}
+          </span>
+          {!isLocked && <ArrowRight className="h-3.5 w-3.5" />}
+        </button>
+      </div>
+    </div>
+  );
+});
+
 export default function BuildOSPage() {
   const router = useRouter();
   const userId = getJourneyUserId();
@@ -81,37 +214,251 @@ export default function BuildOSPage() {
   const [selectedCategory, setSelectedCategory] = useState("All");
   const [selectedDifficulty, setSelectedDifficulty] = useState("All");
 
-  // Main scroll container ref for auto-scrolling to top on page change
-  const mainContentRef = React.useRef<HTMLDivElement>(null);
-
-  // Pagination State (20 items per page)
-  const [currentPage, setCurrentPage] = useState(1);
-  const [pageSize] = useState(20);
+  // Pagination State
   const [totalCount, setTotalCount] = useState(0);
-  const [totalPages, setTotalPages] = useState(1);
   const [hasMore, setHasMore] = useState(false);
   const [userMetrics, setUserMetrics] = useState<{ inProgressCount: number; completedCount: number } | null>(null);
   const activeRequestId = React.useRef(0);
 
-  // Client-side In-Memory Page Cache for 0-buffering instant transitions
-  const pageCacheRef = React.useRef<
-    Map<
-      string,
-      {
-        products: ProductCatalogItem[];
-        totalCount: number;
-        totalPages: number;
-        hasMore: boolean;
-        categories?: string[];
-        difficulties?: string[];
-        unlockProgress?: any;
-        userMetrics?: any;
-      }
-    >
-  >(new Map());
-
   // Selected detail modal
   const [selectedProduct, setSelectedProduct] = useState<ProductCatalogItem | null>(null);
+
+  // Stable callbacks for memoized cards
+  const handleSelectProduct = useCallback((product: ProductCatalogItem) => {
+    setSelectedProduct(product);
+  }, []);
+
+  const handleStartOrContinue = useCallback(
+    (product: ProductCatalogItem) => {
+      if (product.isLocked) return;
+      router.push(`/journey/${product.problemId}?step=${product.currentPhase || 1}`);
+    },
+    [router]
+  );
+
+  // Initial load: fetches first 20 problem statements and syncs with IndexedDB cache
+  const loadInitialProducts = useCallback(async () => {
+    const reqId = ++activeRequestId.current;
+    try {
+      setLoading(true);
+      setError(null);
+      setLoadMoreError(null);
+
+      // 1. Attempt non-blocking cache read for instant render / offline
+      try {
+        const cached = await getCachedProblemsPage({
+          search: searchQuery,
+          category: selectedCategory,
+          difficulty: selectedDifficulty,
+          skip: 0,
+          limit: 20,
+        });
+
+        if (cached && cached.problems.length > 0 && reqId === activeRequestId.current) {
+          const mappedCached: ProductCatalogItem[] = cached.problems.map((p) => ({
+            ...p,
+            userStatus: "not_started",
+            completedPhases: 0,
+            currentPhase: 1,
+            totalPhases: 8,
+            isLocked: false,
+          }));
+          setProducts(mappedCached);
+          setTotalCount(cached.totalCount);
+          setHasMore(cached.totalCount > mappedCached.length);
+          // Show cached items immediately
+          setLoading(false);
+        }
+      } catch (cacheErr) {
+        // Cache misses or errors are non-fatal; continue directly to network fetch
+      }
+
+      // 2. Authoritative network fetch
+      const params = new URLSearchParams({
+        search: searchQuery,
+        category: selectedCategory,
+        difficulty: selectedDifficulty,
+        sort: "numerical_asc",
+        page: "1",
+        limit: "20",
+        skip: "0",
+      });
+
+      const res = await fetch(`/api/products?${params.toString()}`);
+      if (reqId !== activeRequestId.current) return;
+
+      if (res.ok) {
+        const data = await res.json();
+        const items: ProductCatalogItem[] = data.products || data.data || [];
+        const count = typeof data.totalCount === "number" ? data.totalCount : 0;
+        const more = typeof data.hasMore === "boolean" ? data.hasMore : items.length < count;
+
+        setProducts(items);
+        setTotalCount(count);
+        setHasMore(more);
+        if (data.categories) setCategories(data.categories);
+        if (data.difficulties) setDifficulties(data.difficulties);
+        if (data.unlockProgress) setUnlockProgress(data.unlockProgress);
+        if (data.userMetrics) setUserMetrics(data.userMetrics);
+
+        // Save newly fetched 20 problem statements into IndexedDB cache (async, non-blocking)
+        saveProblemsToCache(items).catch(() => {});
+        saveCatalogMeta({
+          categories: data.categories,
+          difficulties: data.difficulties,
+          totalCount: count,
+        }).catch(() => {});
+        setError(null);
+      } else {
+        const errData = await res.json().catch(() => ({}));
+        if (products.length === 0) {
+          setError(errData.error || "Failed to load problem statements from database.");
+        } else {
+          console.warn("Background catalog revalidation error:", errData.error);
+        }
+      }
+    } catch (networkErr: any) {
+      if (reqId === activeRequestId.current) {
+        // Fall back to cached problem records if available offline
+        try {
+          const cached = await getCachedProblemsPage({
+            search: searchQuery,
+            category: selectedCategory,
+            difficulty: selectedDifficulty,
+            skip: 0,
+            limit: 20,
+          });
+
+          if (cached && cached.problems.length > 0) {
+            const mappedCached: ProductCatalogItem[] = cached.problems.map((p) => ({
+              ...p,
+              userStatus: "not_started",
+              completedPhases: 0,
+              currentPhase: 1,
+              totalPhases: 8,
+              isLocked: false,
+            }));
+            setProducts(mappedCached);
+            setTotalCount(cached.totalCount);
+            setHasMore(cached.totalCount > mappedCached.length);
+            setError(null);
+          } else {
+            console.error("Error fetching problems:", networkErr);
+            setError("Network error while loading problem statements.");
+          }
+        } catch {
+          setError("Network error while loading problem statements.");
+        }
+      }
+    } finally {
+      if (reqId === activeRequestId.current) {
+        setLoading(false);
+      }
+    }
+  }, [searchQuery, selectedCategory, selectedDifficulty]);
+
+  // Load More: fetches next 20 problem statements and appends without replacing
+  const handleLoadMore = useCallback(async () => {
+    if (loadingMore || loading || !hasMore) return;
+    const reqId = ++activeRequestId.current;
+
+    try {
+      setLoadingMore(true);
+      setLoadMoreError(null);
+
+      const currentSkip = products.length;
+      const params = new URLSearchParams({
+        search: searchQuery,
+        category: selectedCategory,
+        difficulty: selectedDifficulty,
+        sort: "numerical_asc",
+        limit: "20",
+        skip: currentSkip.toString(),
+      });
+
+      const res = await fetch(`/api/products?${params.toString()}`);
+      if (reqId !== activeRequestId.current) return;
+
+      if (res.ok) {
+        const data = await res.json();
+        const newItems: ProductCatalogItem[] = data.products || data.data || [];
+        const count = typeof data.totalCount === "number" ? data.totalCount : totalCount;
+
+        setProducts((prev) => {
+          const existingIds = new Set(prev.map((p) => p.problemId));
+          const uniqueNew = newItems.filter((p) => !existingIds.has(p.problemId));
+          const combined = [...prev, ...uniqueNew];
+          const more =
+            typeof data.hasMore === "boolean"
+              ? data.hasMore
+              : combined.length < count;
+          setHasMore(more);
+          return combined;
+        });
+
+        if (typeof data.totalCount === "number") {
+          setTotalCount(data.totalCount);
+        }
+
+        // Save newly fetched 20 items to IndexedDB (async, non-blocking)
+        saveProblemsToCache(newItems).catch(() => {});
+      } else {
+        const errData = await res.json().catch(() => ({}));
+        setLoadMoreError(errData.error || "Failed to load additional problems.");
+      }
+    } catch (networkErr: any) {
+      if (reqId === activeRequestId.current) {
+        // Try reading next batch from IndexedDB cache if available offline
+        try {
+          const currentSkip = products.length;
+          const cached = await getCachedProblemsPage({
+            search: searchQuery,
+            category: selectedCategory,
+            difficulty: selectedDifficulty,
+            skip: currentSkip,
+            limit: 20,
+          });
+
+          if (cached && cached.problems.length > 0) {
+            const mappedCached: ProductCatalogItem[] = cached.problems.map((p) => ({
+              ...p,
+              userStatus: "not_started",
+              completedPhases: 0,
+              currentPhase: 1,
+              totalPhases: 8,
+              isLocked: false,
+            }));
+
+            setProducts((prev) => {
+              const existingIds = new Set(prev.map((p) => p.problemId));
+              const uniqueNew = mappedCached.filter((p) => !existingIds.has(p.problemId));
+              const combined = [...prev, ...uniqueNew];
+              setHasMore(combined.length < cached.totalCount);
+              return combined;
+            });
+            setLoadMoreError(null);
+          } else {
+            setLoadMoreError(networkErr.message || "Network error loading more problems.");
+          }
+        } catch {
+          setLoadMoreError(networkErr.message || "Network error loading more problems.");
+        }
+      }
+    } finally {
+      if (reqId === activeRequestId.current) {
+        setLoadingMore(false);
+      }
+    }
+  }, [
+    loadingMore,
+    loading,
+    hasMore,
+    products.length,
+    searchQuery,
+    selectedCategory,
+    selectedDifficulty,
+    totalCount,
+  ]);
 
   // Onboarding route guard
   useEffect(() => {
@@ -119,178 +466,10 @@ export default function BuildOSPage() {
     setProfile(activeProf);
     if (!activeProf?.onboardingCompleted) {
       router.push("/onboarding");
+      return;
     }
-  }, [router]);
-
-  const getCacheKey = useCallback(
-    (page: number) => {
-      return `${searchQuery}_${selectedCategory}_${selectedDifficulty}_p${page}`;
-    },
-    [searchQuery, selectedCategory, selectedDifficulty]
-  );
-
-  // Background Prefetcher: fetches adjacent pages ahead of time so page clicks have 0 buffering
-  const prefetchPage = useCallback(
-    async (pageToPrefetch: number) => {
-      if (pageToPrefetch < 1) return;
-      const key = getCacheKey(pageToPrefetch);
-      if (pageCacheRef.current.has(key)) return;
-
-      try {
-        const params = new URLSearchParams({
-          search: searchQuery,
-          category: selectedCategory,
-          difficulty: selectedDifficulty,
-          sort: "numerical_asc",
-          page: pageToPrefetch.toString(),
-          limit: "20",
-        });
-
-        const res = await fetch(`/api/products?${params.toString()}`);
-        if (res.ok) {
-          const data = await res.json();
-          const items: ProductCatalogItem[] = data.products || data.data || [];
-          pageCacheRef.current.set(key, {
-            products: items,
-            totalCount: data.totalCount ?? 0,
-            totalPages: data.totalPages ?? 1,
-            hasMore: data.hasMore ?? false,
-            categories: data.categories,
-            difficulties: data.difficulties,
-            unlockProgress: data.unlockProgress,
-            userMetrics: data.userMetrics,
-          });
-        }
-      } catch {
-        // Silently ignore prefetch failures in background
-      }
-    },
-    [getCacheKey, searchQuery, selectedCategory, selectedDifficulty]
-  );
-
-  // Page Navigator: displays next/previous 20 items with 0 buffering from cache
-  const loadPage = useCallback(
-    async (targetPage: number) => {
-      const key = getCacheKey(targetPage);
-      const cached = pageCacheRef.current.get(key);
-
-      // Instant 0-buffering transition if cached
-      if (cached) {
-        setProducts(cached.products);
-        setCurrentPage(targetPage);
-        setTotalCount(cached.totalCount);
-        setTotalPages(cached.totalPages);
-        setHasMore(cached.hasMore);
-        setLoading(false);
-        setError(null);
-        mainContentRef.current?.scrollTo({ top: 0, behavior: "smooth" });
-
-        // Trigger background prefetch for adjacent pages
-        if (targetPage + 1 <= cached.totalPages) {
-          prefetchPage(targetPage + 1);
-        }
-        if (targetPage > 1) {
-          prefetchPage(targetPage - 1);
-        }
-        return;
-      }
-
-      // Fetch if not yet in cache
-      const reqId = ++activeRequestId.current;
-      try {
-        setLoading(true);
-        setError(null);
-
-        const params = new URLSearchParams({
-          search: searchQuery,
-          category: selectedCategory,
-          difficulty: selectedDifficulty,
-          sort: "numerical_asc",
-          page: targetPage.toString(),
-          limit: "20",
-        });
-
-        const res = await fetch(`/api/products?${params.toString()}`);
-        if (reqId !== activeRequestId.current) return;
-
-        if (res.ok) {
-          const data = await res.json();
-          const items: ProductCatalogItem[] = data.products || data.data || [];
-          const count = typeof data.totalCount === "number" ? data.totalCount : 0;
-          const pages = typeof data.totalPages === "number" ? data.totalPages : Math.ceil(count / 20) || 1;
-          const more =
-            typeof data.hasMore === "boolean"
-              ? data.hasMore
-              : typeof data.pagination?.hasMore === "boolean"
-              ? data.pagination.hasMore
-              : targetPage < pages;
-
-          // Store in cache for future instant navigation
-          pageCacheRef.current.set(key, {
-            products: items,
-            totalCount: count,
-            totalPages: pages,
-            hasMore: more,
-            categories: data.categories,
-            difficulties: data.difficulties,
-            unlockProgress: data.unlockProgress,
-            userMetrics: data.userMetrics,
-          });
-
-          setProducts(items);
-          setCurrentPage(targetPage);
-          setTotalCount(count);
-          setTotalPages(pages);
-          setHasMore(more);
-          if (data.categories) setCategories(data.categories);
-          if (data.difficulties) setDifficulties(data.difficulties);
-          if (data.unlockProgress) setUnlockProgress(data.unlockProgress);
-          if (data.userMetrics) setUserMetrics(data.userMetrics);
-
-          mainContentRef.current?.scrollTo({ top: 0, behavior: "smooth" });
-
-          // Prefetch adjacent pages in background
-          if (targetPage + 1 <= pages) {
-            prefetchPage(targetPage + 1);
-          }
-          if (targetPage > 1) {
-            prefetchPage(targetPage - 1);
-          }
-        } else {
-          const errData = await res.json().catch(() => ({}));
-          setError(errData.error || "Failed to load problem statements from database.");
-        }
-      } catch (err: any) {
-        if (reqId === activeRequestId.current) {
-          console.error("Error fetching problems:", err);
-          setError("Network error while loading problem statements.");
-        }
-      } finally {
-        if (reqId === activeRequestId.current) {
-          setLoading(false);
-        }
-      }
-    },
-    [getCacheKey, prefetchPage, searchQuery, selectedCategory, selectedDifficulty]
-  );
-
-  const handlePrevPage = useCallback(() => {
-    if (currentPage > 1 && !loading) {
-      loadPage(currentPage - 1);
-    }
-  }, [currentPage, loading, loadPage]);
-
-  const handleNextPage = useCallback(() => {
-    if (currentPage < totalPages && !loading) {
-      loadPage(currentPage + 1);
-    }
-  }, [currentPage, totalPages, loading, loadPage]);
-
-  // Initial load and filter change trigger
-  useEffect(() => {
-    pageCacheRef.current.clear();
-    loadPage(1);
-  }, [loadPage]);
+    loadInitialProducts();
+  }, [router, loadInitialProducts]);
 
   const navItems = [
     { id: "buildos",   label: "BuildOS",          icon: LayoutDashboard, href: "/dashboard" },
@@ -373,7 +552,7 @@ export default function BuildOSPage() {
       {/* ================================================================ */}
       {/* MAIN CONTENT                                                       */}
       {/* ================================================================ */}
-      <div ref={mainContentRef} className="flex-1 flex flex-col min-w-0 h-full overflow-y-auto">
+      <div className="flex-1 flex flex-col min-w-0 h-full overflow-y-auto">
 
         {/* Top Header */}
         <header className="h-14 border-b border-zinc-200 bg-white px-7 flex items-center justify-between shrink-0 sticky top-0 z-20">
@@ -478,10 +657,7 @@ export default function BuildOSPage() {
                 type="text"
                 placeholder="Search problem statements..."
                 value={searchQuery}
-                onChange={(e) => {
-                  setSearchQuery(e.target.value);
-                  setCurrentPage(1);
-                }}
+                onChange={(e) => setSearchQuery(e.target.value)}
                 className="w-full pl-9 pr-4 py-2 rounded-xl bg-zinc-50 border border-zinc-200 text-xs font-sans text-zinc-800 focus:outline-none focus:ring-2 focus:ring-teal-600/30 focus:border-teal-600 transition-all"
               />
             </div>
@@ -496,10 +672,7 @@ export default function BuildOSPage() {
               {/* Category Dropdown */}
               <select
                 value={selectedCategory}
-                onChange={(e) => {
-                  setSelectedCategory(e.target.value);
-                  setCurrentPage(1);
-                }}
+                onChange={(e) => setSelectedCategory(e.target.value)}
                 className="px-3 py-2 rounded-xl bg-zinc-50 border border-zinc-200 text-xs font-mono text-zinc-700 focus:outline-none focus:ring-2 focus:ring-teal-600/30 cursor-pointer shrink-0"
               >
                 <option value="All">All Categories</option>
@@ -513,10 +686,7 @@ export default function BuildOSPage() {
               {/* Difficulty Dropdown */}
               <select
                 value={selectedDifficulty}
-                onChange={(e) => {
-                  setSelectedDifficulty(e.target.value);
-                  setCurrentPage(1);
-                }}
+                onChange={(e) => setSelectedDifficulty(e.target.value)}
                 className="px-3 py-2 rounded-xl bg-zinc-50 border border-zinc-200 text-xs font-mono text-zinc-700 focus:outline-none focus:ring-2 focus:ring-teal-600/30 cursor-pointer shrink-0"
               >
                 <option value="All">All Difficulties</option>
@@ -528,10 +698,7 @@ export default function BuildOSPage() {
               </select>
 
               <button
-                onClick={() => {
-                  pageCacheRef.current.clear();
-                  loadPage(currentPage);
-                }}
+                onClick={loadInitialProducts}
                 title="Refresh library"
                 className="p-2 rounded-xl bg-zinc-50 hover:bg-zinc-100 border border-zinc-200 text-zinc-500 hover:text-zinc-800 transition-colors cursor-pointer shrink-0"
               >
@@ -607,219 +774,69 @@ export default function BuildOSPage() {
               </button>
             </div>
           ) : (
-            /* Problem Statements Grid */
+            /* Problem Statements Grid (Memoized Cards to eliminate redundant re-rendering) */
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-              {products.map((product) => {
-                const isLocked = product.isLocked;
-                const isInProgress = product.userStatus === "in_progress";
-                const isCompleted = product.userStatus === "completed";
-
-                return (
-                  <div
-                    key={product.problemId}
-                    className={`bg-white border rounded-2xl p-6 flex flex-col justify-between transition-all duration-200 relative group hover:shadow-lg ${
-                      isLocked
-                        ? "border-zinc-200 bg-zinc-50/50 opacity-90"
-                        : isInProgress
-                        ? "border-teal-300 shadow-md shadow-teal-500/5 ring-1 ring-teal-500/20"
-                        : isCompleted
-                        ? "border-emerald-200 bg-emerald-50/10"
-                        : "border-zinc-200 hover:border-teal-200"
-                    }`}
-                  >
-                    <div className="space-y-4">
-                      {/* Card Top Badges */}
-                      <div className="flex items-center justify-between gap-2">
-                        <div className="flex items-center gap-2">
-                          <span className="text-[11px] font-mono font-bold bg-teal-50 border border-teal-100 text-teal-800 px-2.5 py-0.5 rounded-md">
-                            {product.problemId}
-                          </span>
-                          {product.category && (
-                            <span className="text-[11px] font-mono text-zinc-600 bg-zinc-100 px-2 py-0.5 rounded-md truncate max-w-[120px]">
-                              {product.category}
-                            </span>
-                          )}
-                        </div>
-
-                        {/* Difficulty Badge */}
-                        {product.difficulty && (
-                          <span
-                            className={`text-[10px] font-mono font-bold px-2 py-0.5 rounded-md border ${
-                              product.difficulty === "Beginner"
-                                ? "bg-emerald-50 text-emerald-800 border-emerald-200"
-                                : product.difficulty === "Intermediate"
-                                ? "bg-amber-50 text-amber-800 border-amber-200"
-                                : "bg-purple-50 text-purple-800 border-purple-200"
-                            }`}
-                          >
-                            {product.difficulty}
-                          </span>
-                        )}
-                      </div>
-
-                      {/* Card Title & Statement */}
-                      <div>
-                        <h4
-                          onClick={() => {
-                            if (!isLocked) {
-                              const step = product.currentPhase || 1;
-                              router.push(`/journey/${product.problemId}?step=${step}`);
-                            }
-                          }}
-                          className={`font-serif font-bold text-base text-zinc-900 tracking-tight leading-snug group-hover:text-teal-800 transition-colors ${
-                            !isLocked ? "cursor-pointer" : ""
-                          }`}
-                        >
-                          {product.title}
-                        </h4>
-                        <p className="mt-2 text-xs text-zinc-600 leading-relaxed line-clamp-3">
-                          {product.problemStatement || product.description}
-                        </p>
-                      </div>
-
-                      {/* Skills Tags */}
-                      {product.skills && product.skills.length > 0 && (
-                        <div className="flex flex-wrap gap-1 pt-1">
-                          {product.skills.slice(0, 3).map((skill, sIdx) => (
-                            <span
-                              key={sIdx}
-                              className="text-[10px] font-mono bg-zinc-100 text-zinc-600 px-2 py-0.5 rounded-md"
-                            >
-                              {skill}
-                            </span>
-                          ))}
-                          {product.skills.length > 3 && (
-                            <span className="text-[10px] font-mono text-zinc-400">
-                              +{product.skills.length - 3} more
-                            </span>
-                          )}
-                        </div>
-                      )}
-                    </div>
-
-                    {/* Card Footer & CTA */}
-                    <div className="pt-5 mt-4 border-t border-zinc-100 flex items-center justify-between gap-3">
-                      {/* Status indicator */}
-                      <div className="text-[11px] font-mono">
-                        {isLocked ? (
-                          <span className="text-rose-600 font-semibold flex items-center gap-1">
-                            <Lock className="h-3 w-3" /> Locked
-                          </span>
-                        ) : isCompleted ? (
-                          <span className="text-emerald-700 font-semibold flex items-center gap-1">
-                            <CheckCircle2 className="h-3 w-3" /> Shipped
-                          </span>
-                        ) : isInProgress ? (
-                          <span className="text-amber-700 font-semibold">
-                            Phase {product.currentPhase}/8
-                          </span>
-                        ) : (
-                          <span className="text-zinc-400">Ready to build</span>
-                        )}
-                      </div>
-
-                      {/* Buttons */}
-                      <div className="flex items-center gap-2">
-                        <button
-                          onClick={() => setSelectedProduct(product)}
-                          className="px-3 py-1.5 rounded-lg bg-zinc-100 hover:bg-zinc-200 text-zinc-700 text-xs font-mono font-medium transition-colors cursor-pointer"
-                        >
-                          Details
-                        </button>
-
-                        <button
-                          disabled={!!isLocked}
-                          onClick={() => {
-                            if (isLocked) return;
-                            const step = product.currentPhase || 1;
-                            router.push(`/journey/${product.problemId}?step=${step}`);
-                          }}
-                          className={`inline-flex items-center gap-1.5 px-4 py-1.5 rounded-lg text-xs font-semibold font-sans transition-all cursor-pointer ${
-                            isLocked
-                              ? "bg-zinc-200 text-zinc-400 cursor-not-allowed border border-zinc-300"
-                              : isInProgress
-                              ? "bg-amber-600 hover:bg-amber-700 text-white shadow-sm"
-                              : isCompleted
-                              ? "bg-emerald-700 hover:bg-emerald-800 text-white shadow-sm"
-                              : "bg-teal-800 hover:bg-teal-700 text-white shadow-sm"
-                          }`}
-                        >
-                          <span>
-                            {isLocked
-                              ? "🔒 Locked"
-                              : isInProgress
-                              ? "Continue"
-                              : isCompleted
-                              ? "Review"
-                              : "Start Building"}
-                          </span>
-                          {!isLocked && <ArrowRight className="h-3.5 w-3.5" />}
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                );
-              })}
+              {products.map((product) => (
+                <DashboardProblemCard
+                  key={product.problemId}
+                  product={product}
+                  onSelect={handleSelectProduct}
+                  onStartOrContinue={handleStartOrContinue}
+                />
+              ))}
             </div>
           )}
 
-          {/* Instant Page-by-Page Pagination Controls */}
+          {/* Incremental Load More Pagination Controls */}
           {products.length > 0 && (
-            <div className="pt-6 border-t border-zinc-200">
-              <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
-                {/* Statements Counter Status */}
-                <div className="text-xs font-mono text-zinc-500">
-                  Showing{" "}
-                  <span className="font-semibold text-zinc-900">
-                    {totalCount > 0 ? (currentPage - 1) * pageSize + 1 : 0}
-                  </span>
-                  –
-                  <span className="font-semibold text-zinc-900">
-                    {Math.min(currentPage * pageSize, totalCount || products.length)}
-                  </span>{" "}
-                  of <span className="font-semibold text-zinc-900">{totalCount || products.length}</span> statements
-                </div>
-
-                {/* Page Navigation Controls */}
-                <div className="flex items-center gap-2">
-                  <button
-                    type="button"
-                    id="dashboard-prev-btn"
-                    disabled={currentPage <= 1 || loading}
-                    onClick={handlePrevPage}
-                    title="Go to previous page"
-                    className={`inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl border text-xs font-mono font-semibold transition-all ${
-                      currentPage <= 1 || loading
-                        ? "border-zinc-200 text-zinc-300 cursor-not-allowed bg-zinc-50"
-                        : "border-zinc-300 text-zinc-700 hover:bg-zinc-100 hover:border-zinc-400 cursor-pointer bg-white shadow-xs"
-                    }`}
-                  >
-                    <ChevronLeft className="h-3.5 w-3.5" />
-                    <span>Previous</span>
-                  </button>
-
-                  <div className="px-3.5 py-2 rounded-xl bg-zinc-100 border border-zinc-200 text-xs font-mono font-medium text-zinc-700">
-                    Page <span className="font-bold text-zinc-900">{currentPage}</span> of{" "}
-                    <span className="font-bold text-zinc-900">{totalPages || 1}</span>
-                  </div>
-
-                  <button
-                    type="button"
-                    id="dashboard-next-btn"
-                    disabled={currentPage >= totalPages || !hasMore || loading}
-                    onClick={handleNextPage}
-                    title="Go to next page"
-                    className={`inline-flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-mono font-semibold transition-all ${
-                      currentPage >= totalPages || !hasMore || loading
-                        ? "border border-zinc-200 text-zinc-300 cursor-not-allowed bg-zinc-50"
-                        : "bg-teal-800 hover:bg-teal-700 text-white shadow-sm hover:shadow cursor-pointer border border-teal-800"
-                    }`}
-                  >
-                    <span>Next</span>
-                    <ChevronRight className="h-3.5 w-3.5" />
-                  </button>
-                </div>
+            <div className="pt-8 pb-4 flex flex-col items-center justify-center space-y-4 border-t border-zinc-200">
+              <div className="text-xs font-mono text-zinc-500 text-center">
+                Showing <span className="font-semibold text-zinc-900">{products.length}</span> of{" "}
+                <span className="font-semibold text-zinc-900">{totalCount}</span> matching problem statements
               </div>
+
+              {loadMoreError && (
+                <div className="flex items-center gap-2 p-3 bg-rose-50 border border-rose-200 text-rose-700 text-xs rounded-xl">
+                  <AlertCircle className="h-4 w-4 shrink-0 text-rose-600" />
+                  <span>{loadMoreError}</span>
+                  <button
+                    onClick={handleLoadMore}
+                    className="font-bold underline hover:text-rose-900 cursor-pointer ml-2"
+                  >
+                    Retry
+                  </button>
+                </div>
+              )}
+
+              {hasMore ? (
+                <button
+                  type="button"
+                  id="dashboard-load-more-btn"
+                  disabled={loadingMore || loading}
+                  onClick={handleLoadMore}
+                  className={`px-6 py-2.5 rounded-xl border text-xs font-mono font-semibold transition-all inline-flex items-center gap-2 shadow-xs ${
+                    loadingMore
+                      ? "bg-zinc-100 border-zinc-300 text-zinc-400 cursor-not-allowed"
+                      : "bg-white hover:bg-zinc-50 border-zinc-300 hover:border-zinc-400 text-zinc-800 cursor-pointer"
+                  }`}
+                >
+                  {loadingMore ? (
+                    <>
+                      <RefreshCw className="h-3.5 w-3.5 animate-spin text-teal-700" />
+                      <span>Loading next 20 statements...</span>
+                    </>
+                  ) : (
+                    <>
+                      <span>Load More (+20)</span>
+                      <ChevronRight className="h-3.5 w-3.5 text-zinc-500" />
+                    </>
+                  )}
+                </button>
+              ) : (
+                <div className="text-xs font-mono text-zinc-400 bg-zinc-50 px-4 py-2 rounded-xl border border-zinc-200">
+                  ✓ All {totalCount} matching statements loaded
+                </div>
+              )}
             </div>
           )}
 

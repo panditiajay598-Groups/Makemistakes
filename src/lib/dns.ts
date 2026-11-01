@@ -119,6 +119,83 @@ export function getDnsStatus(): DnsConfigStatus {
   );
 }
 
+export type LookupFunction = (
+  hostname: string,
+  options: any,
+  callback: (err: NodeJS.ErrnoException | null, address: any, family?: any) => void
+) => void;
+
+let fallbackResolver: dns.promises.Resolver | null = null;
+
+function getFallbackResolver(): dns.promises.Resolver {
+  if (!fallbackResolver) {
+    fallbackResolver = new dns.promises.Resolver();
+    const servers =
+      process.env.DNS_SERVERS
+        ? process.env.DNS_SERVERS.split(",").map((s) => s.trim()).filter(Boolean)
+        : DEFAULT_DNS_SERVERS;
+    fallbackResolver.setServers(servers.length > 0 ? servers : DEFAULT_DNS_SERVERS);
+  }
+  return fallbackResolver;
+}
+
+/**
+ * Resilient lookup function for Node.js network sockets and MongoDB driver.
+ *
+ * Resolves hostnames via standard OS `dns.lookup`. If the OS resolver fails with
+ * ENOTFOUND (common on Windows with CNAME chains or ISP restrictions), falls back
+ * to resolving via public DNS resolvers (8.8.8.8, 1.1.1.1).
+ */
+export function createResilientLookup(): LookupFunction {
+  return function resilientLookup(hostname, options, callback) {
+    if (typeof options === "function") {
+      callback = options;
+      options = {};
+    }
+
+    const wantAll = Boolean(options && typeof options === "object" && options.all);
+
+    dns.lookup(hostname, options, async (err, address, family) => {
+      if (!err && address) {
+        return callback(null, address, family);
+      }
+
+      // If OS lookup failed, fallback to public DNS resolver
+      try {
+        const resolver = getFallbackResolver();
+        const ips = await resolver.resolve4(hostname);
+        if (ips && ips.length > 0) {
+          if (wantAll) {
+            return callback(
+              null,
+              ips.map((ip) => ({ address: ip, family: 4 }))
+            );
+          }
+          return callback(null, ips[0], 4);
+        }
+      } catch {
+        try {
+          const resolver = getFallbackResolver();
+          const ip6s = await resolver.resolve6(hostname);
+          if (ip6s && ip6s.length > 0) {
+            if (wantAll) {
+              return callback(
+                null,
+                ip6s.map((ip) => ({ address: ip, family: 6 }))
+              );
+            }
+            return callback(null, ip6s[0], 6);
+          }
+        } catch {
+          // Fall through to original error
+        }
+      }
+
+      return callback(err || new Error(`DNS lookup failed for ${hostname}`), address, family);
+    });
+  };
+}
+
 /**
  * Reset DNS configuration state strictly for test suite verification.
  * @internal
@@ -126,4 +203,6 @@ export function getDnsStatus(): DnsConfigStatus {
 export function _resetDnsForTesting(): void {
   globalThis.__dnsConfigured = undefined;
   cachedStatus = null;
+  fallbackResolver = null;
 }
+

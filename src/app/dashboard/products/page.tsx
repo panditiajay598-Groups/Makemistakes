@@ -26,6 +26,11 @@ import {
 } from "lucide-react";
 import { getOnboardingProfile, UserOnboardingProfile } from "@/lib/onboardingStore";
 import { getJourneyUserId } from "@/lib/journeyUser";
+import {
+  saveProblemsToCache,
+  getCachedProblemsPage,
+  saveCatalogMeta,
+} from "@/lib/problemIndexedDb";
 
 interface ProductCatalogItem {
   problemId: string;
@@ -57,6 +62,177 @@ interface UnlockProgress {
   advancedUnlocked: boolean;
 }
 
+interface ProblemCardProps {
+  product: ProductCatalogItem;
+  onSelect: (product: ProductCatalogItem) => void;
+  onStartOrContinue: (product: ProductCatalogItem) => void;
+}
+
+/**
+ * Memoized Problem Card Component
+ * Prevents unnecessary re-rendering of existing cards when appending batches.
+ */
+const ProblemCard = React.memo(function ProblemCard({
+  product,
+  onSelect,
+  onStartOrContinue,
+}: ProblemCardProps) {
+  const isCompleted = product.userStatus === "completed";
+  const isInProgress = product.userStatus === "in_progress";
+  const isLocked = !!product.isLocked;
+
+  return (
+    <div
+      key={product.problemId}
+      className={`bg-white rounded-2xl border ${
+        isLocked ? "border-rose-200/80 bg-gradient-to-b from-white to-rose-50/20" : "border-zinc-200"
+      } p-6 space-y-4 shadow-xs hover:shadow-md transition-all flex flex-col justify-between group`}
+    >
+      <div className="space-y-3">
+        {/* Top Badges */}
+        <div className="flex items-center justify-between gap-2 flex-wrap">
+          <div className="flex items-center gap-1.5">
+            <span className="text-[11px] font-mono font-bold bg-teal-50 border border-teal-100 text-teal-800 px-2.5 py-0.5 rounded-md">
+              {product.problemId}
+            </span>
+            {product.category && (
+              <span className="text-[10px] font-mono text-zinc-500 bg-zinc-100 px-2 py-0.5 rounded-md truncate max-w-[120px]">
+                {product.category}
+              </span>
+            )}
+          </div>
+
+          {product.difficulty && (
+            <span
+              className={`text-[10px] font-mono font-bold px-2 py-0.5 rounded flex items-center gap-1 ${
+                isLocked
+                  ? "bg-rose-100 text-rose-800 border border-rose-200"
+                  : product.difficulty === "Beginner"
+                  ? "bg-emerald-50 text-emerald-700 border border-emerald-200"
+                  : product.difficulty === "Intermediate"
+                  ? "bg-amber-50 text-amber-700 border border-amber-200"
+                  : "bg-purple-50 text-purple-700 border border-purple-200"
+              }`}
+            >
+              {isLocked && <Lock className="h-3 w-3 text-rose-600" />}
+              {product.difficulty} {isLocked ? "🔒" : ""}
+            </span>
+          )}
+        </div>
+
+        {/* Title */}
+        <h3
+          onClick={() => {
+            if (!isLocked) onStartOrContinue(product);
+          }}
+          className={`text-base font-serif font-bold text-zinc-900 group-hover:text-teal-800 transition-colors line-clamp-2 ${
+            !isLocked ? "cursor-pointer" : ""
+          }`}
+        >
+          {product.title}
+        </h3>
+
+        {/* Description / Context */}
+        <p className="text-xs text-zinc-600 font-sans leading-relaxed line-clamp-3">
+          {product.description}
+        </p>
+
+        {/* Country / Skills Tags if present */}
+        {(product.country || (product.skills && product.skills.length > 0)) && (
+          <div className="flex flex-wrap gap-1 pt-1">
+            {product.country && (
+              <span className="text-[10px] font-mono bg-zinc-100 text-zinc-600 px-2 py-0.5 rounded">
+                📍 {product.country}
+              </span>
+            )}
+            {product.skills.slice(0, 2).map((skill, sIdx) => (
+              <span
+                key={sIdx}
+                className="text-[10px] font-mono bg-teal-50/70 text-teal-800 px-2 py-0.5 rounded border border-teal-100"
+              >
+                {skill}
+              </span>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Footer Status & Actions */}
+      <div className="pt-4 border-t border-zinc-100 space-y-3">
+        {/* User status badge */}
+        <div className="flex items-center justify-between text-[11px] font-mono">
+          <span className="text-zinc-500">Your Status:</span>
+          <span
+            className={`font-bold px-2 py-0.5 rounded flex items-center gap-1 ${
+              isLocked
+                ? "bg-rose-50 text-rose-700 border border-rose-200"
+                : isCompleted
+                ? "bg-emerald-100 text-emerald-800"
+                : isInProgress
+                ? "bg-teal-100 text-teal-900"
+                : "bg-zinc-100 text-zinc-500"
+            }`}
+          >
+            {isLocked ? (
+              <>
+                <Lock className="h-3 w-3 text-rose-600" />
+                <span>Locked</span>
+              </>
+            ) : isCompleted ? (
+              <>
+                <CheckCircle2 className="h-3 w-3 text-emerald-600" />
+                <span>Completed ✓</span>
+              </>
+            ) : isInProgress ? (
+              <span>In Progress (Phase {product.currentPhase})</span>
+            ) : (
+              <span>Not Started</span>
+            )}
+          </span>
+        </div>
+
+        {/* Action buttons */}
+        <div className="grid grid-cols-2 gap-2">
+          <button
+            type="button"
+            onClick={() => onSelect(product)}
+            className="px-3 py-2 rounded-xl bg-zinc-100 hover:bg-zinc-200 text-zinc-800 text-xs font-semibold font-sans cursor-pointer transition-all flex items-center justify-center gap-1"
+          >
+            <BookOpen className="h-3.5 w-3.5 text-zinc-500" />
+            <span>View Details</span>
+          </button>
+
+          <button
+            type="button"
+            disabled={isLocked}
+            onClick={() => onStartOrContinue(product)}
+            className={`px-3 py-2 rounded-xl text-xs font-semibold font-sans transition-all flex items-center justify-center gap-1 ${
+              isLocked
+                ? "bg-zinc-200 text-zinc-400 cursor-not-allowed border border-zinc-300"
+                : isCompleted
+                ? "bg-emerald-700 hover:bg-emerald-600 text-white cursor-pointer"
+                : isInProgress
+                ? "bg-teal-800 hover:bg-teal-700 text-white cursor-pointer"
+                : "bg-teal-800 hover:bg-teal-700 text-white shadow-xs cursor-pointer"
+            }`}
+          >
+            <span>
+              {isLocked
+                ? "🔒 Locked"
+                : isCompleted
+                ? "View Journey"
+                : isInProgress
+                ? "Continue"
+                : "Start Building"}
+            </span>
+            {!isLocked && <ArrowRight className="h-3.5 w-3.5" />}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+});
+
 export default function ProductsPage() {
   const router = useRouter();
   const userId = getJourneyUserId();
@@ -78,197 +254,251 @@ export default function ProductsPage() {
   const [selectedDifficulty, setSelectedDifficulty] = useState("All");
   const [sortOrder, setSortOrder] = useState("numerical_asc");
 
-  // Main scroll container ref for auto-scrolling to top on page change
-  const mainContentRef = React.useRef<HTMLDivElement>(null);
-
-  // Pagination State (20 items per page)
-  const [currentPage, setCurrentPage] = useState(1);
-  const [pageSize] = useState(20);
+  // Pagination State
   const [totalCount, setTotalCount] = useState(0);
-  const [totalPages, setTotalPages] = useState(1);
   const [hasMore, setHasMore] = useState(false);
   const activeRequestId = React.useRef(0);
-
-  // Client-side In-Memory Page Cache for 0-buffering instant transitions
-  const pageCacheRef = React.useRef<
-    Map<
-      string,
-      {
-        products: ProductCatalogItem[];
-        totalCount: number;
-        totalPages: number;
-        hasMore: boolean;
-        categories?: string[];
-        difficulties?: string[];
-        unlockProgress?: any;
-      }
-    >
-  >(new Map());
 
   // Detail Modal State
   const [selectedProduct, setSelectedProduct] = useState<ProductCatalogItem | null>(null);
 
-  const getCacheKey = useCallback(
-    (page: number) => {
-      return `${searchQuery}_${selectedCategory}_${selectedDifficulty}_${sortOrder}_p${page}`;
+  // Stable callbacks for memoized cards
+  const handleSelectProduct = useCallback((product: ProductCatalogItem) => {
+    setSelectedProduct(product);
+  }, []);
+
+  const handleStartOrContinue = useCallback(
+    (product: ProductCatalogItem) => {
+      if (product.isLocked) return;
+      router.push(`/journey/${product.problemId}?step=${product.currentPhase || 1}`);
     },
-    [searchQuery, selectedCategory, selectedDifficulty, sortOrder]
+    [router]
   );
 
-  // Background Prefetcher: fetches adjacent pages ahead of time so page clicks have 0 buffering
-  const prefetchPage = useCallback(
-    async (pageToPrefetch: number) => {
-      if (pageToPrefetch < 1) return;
-      const key = getCacheKey(pageToPrefetch);
-      if (pageCacheRef.current.has(key)) return;
+  // Initial load: fetches first 20 problem statements and syncs with IndexedDB cache
+  const loadInitialProducts = useCallback(async () => {
+    const reqId = ++activeRequestId.current;
+    try {
+      setLoading(true);
+      setError(null);
+      setLoadMoreError(null);
 
+      // 1. Attempt non-blocking cache read for instant render / offline
       try {
-        const params = new URLSearchParams({
+        const cached = await getCachedProblemsPage({
           search: searchQuery,
           category: selectedCategory,
           difficulty: selectedDifficulty,
-          sort: sortOrder,
-          page: pageToPrefetch.toString(),
-          limit: "20",
+          skip: 0,
+          limit: 20,
         });
 
-        const res = await fetch(`/api/products?${params.toString()}`);
-        if (res.ok) {
-          const data = await res.json();
-          const items: ProductCatalogItem[] = data.products || data.data || [];
-          pageCacheRef.current.set(key, {
-            products: items,
-            totalCount: data.totalCount ?? 0,
-            totalPages: data.totalPages ?? 1,
-            hasMore: data.hasMore ?? false,
-            categories: data.categories,
-            difficulties: data.difficulties,
-            unlockProgress: data.unlockProgress,
+        if (cached && cached.problems.length > 0 && reqId === activeRequestId.current) {
+          const mappedCached: ProductCatalogItem[] = cached.problems.map((p) => ({
+            ...p,
+            userStatus: "not_started",
+            completedPhases: 0,
+            currentPhase: 1,
+            totalPhases: 8,
+            isLocked: false,
+          }));
+          setProducts(mappedCached);
+          setTotalCount(cached.totalCount);
+          setHasMore(cached.totalCount > mappedCached.length);
+          // Show cached items immediately
+          setLoading(false);
+        }
+      } catch (cacheErr) {
+        // Cache misses or errors are non-fatal; continue directly to network fetch
+      }
+
+      // 2. Authoritative network fetch
+      const params = new URLSearchParams({
+        search: searchQuery,
+        category: selectedCategory,
+        difficulty: selectedDifficulty,
+        sort: sortOrder,
+        page: "1",
+        limit: "20",
+        skip: "0",
+      });
+
+      const res = await fetch(`/api/products?${params.toString()}`);
+      if (reqId !== activeRequestId.current) return;
+
+      if (res.ok) {
+        const data = await res.json();
+        const items: ProductCatalogItem[] = data.products || data.data || [];
+        const count = typeof data.totalCount === "number" ? data.totalCount : 0;
+        const more = typeof data.hasMore === "boolean" ? data.hasMore : items.length < count;
+
+        setProducts(items);
+        setTotalCount(count);
+        setHasMore(more);
+        if (data.categories) setCategories(data.categories);
+        if (data.difficulties) setDifficulties(data.difficulties);
+        if (data.unlockProgress) setUnlockProgress(data.unlockProgress);
+
+        // Save newly fetched 20 problem statements into IndexedDB cache (async, non-blocking)
+        saveProblemsToCache(items).catch(() => {});
+        saveCatalogMeta({
+          categories: data.categories,
+          difficulties: data.difficulties,
+          totalCount: count,
+        }).catch(() => {});
+        setError(null);
+      } else {
+        const errData = await res.json().catch(() => ({}));
+        if (products.length === 0) {
+          setError(errData.error || "Unable to load problems catalog.");
+        } else {
+          console.warn("Background catalog revalidation error:", errData.error);
+        }
+      }
+    } catch (networkErr: any) {
+      if (reqId === activeRequestId.current) {
+        // Fall back to cached problem records if available offline
+        try {
+          const cached = await getCachedProblemsPage({
+            search: searchQuery,
+            category: selectedCategory,
+            difficulty: selectedDifficulty,
+            skip: 0,
+            limit: 20,
           });
+
+          if (cached && cached.problems.length > 0) {
+            const mappedCached: ProductCatalogItem[] = cached.problems.map((p) => ({
+              ...p,
+              userStatus: "not_started",
+              completedPhases: 0,
+              currentPhase: 1,
+              totalPhases: 8,
+              isLocked: false,
+            }));
+            setProducts(mappedCached);
+            setTotalCount(cached.totalCount);
+            setHasMore(cached.totalCount > mappedCached.length);
+            setError(null);
+          } else {
+            setError(networkErr.message || "Failed to connect to problem database.");
+          }
+        } catch {
+          setError(networkErr.message || "Failed to connect to problem database.");
         }
-      } catch {
-        // Silently ignore prefetch failures in background
       }
-    },
-    [getCacheKey, searchQuery, selectedCategory, selectedDifficulty, sortOrder]
-  );
-
-  // Page Navigator: displays next/previous 20 items with 0 buffering from cache
-  const loadPage = useCallback(
-    async (targetPage: number) => {
-      const key = getCacheKey(targetPage);
-      const cached = pageCacheRef.current.get(key);
-
-      // Instant 0-buffering transition if cached
-      if (cached) {
-        setProducts(cached.products);
-        setCurrentPage(targetPage);
-        setTotalCount(cached.totalCount);
-        setTotalPages(cached.totalPages);
-        setHasMore(cached.hasMore);
+    } finally {
+      if (reqId === activeRequestId.current) {
         setLoading(false);
-        setError(null);
-        mainContentRef.current?.scrollTo({ top: 0, behavior: "smooth" });
-
-        // Trigger background prefetch for adjacent pages
-        if (targetPage + 1 <= cached.totalPages) {
-          prefetchPage(targetPage + 1);
-        }
-        if (targetPage > 1) {
-          prefetchPage(targetPage - 1);
-        }
-        return;
       }
+    }
+  }, [searchQuery, selectedCategory, selectedDifficulty, sortOrder]);
 
-      // Fetch if not yet in cache
-      const reqId = ++activeRequestId.current;
-      try {
-        setLoading(true);
-        setError(null);
+  // Load More: fetches next 20 problem statements and appends without replacing
+  const handleLoadMore = useCallback(async () => {
+    if (loadingMore || loading || !hasMore) return;
+    const reqId = ++activeRequestId.current;
 
-        const params = new URLSearchParams({
-          search: searchQuery,
-          category: selectedCategory,
-          difficulty: selectedDifficulty,
-          sort: sortOrder,
-          page: targetPage.toString(),
-          limit: "20",
-        });
+    try {
+      setLoadingMore(true);
+      setLoadMoreError(null);
 
-        const res = await fetch(`/api/products?${params.toString()}`);
-        if (reqId !== activeRequestId.current) return;
+      const currentSkip = products.length;
+      const params = new URLSearchParams({
+        search: searchQuery,
+        category: selectedCategory,
+        difficulty: selectedDifficulty,
+        sort: sortOrder,
+        limit: "20",
+        skip: currentSkip.toString(),
+      });
 
-        if (res.ok) {
-          const data = await res.json();
-          const items: ProductCatalogItem[] = data.products || data.data || [];
-          const count = typeof data.totalCount === "number" ? data.totalCount : 0;
-          const pages = typeof data.totalPages === "number" ? data.totalPages : Math.ceil(count / 20) || 1;
+      const res = await fetch(`/api/products?${params.toString()}`);
+      if (reqId !== activeRequestId.current) return;
+
+      if (res.ok) {
+        const data = await res.json();
+        const newItems: ProductCatalogItem[] = data.products || data.data || [];
+        const count = typeof data.totalCount === "number" ? data.totalCount : totalCount;
+
+        setProducts((prev) => {
+          const existingIds = new Set(prev.map((p) => p.problemId));
+          const uniqueNew = newItems.filter((p) => !existingIds.has(p.problemId));
+          const combined = [...prev, ...uniqueNew];
           const more =
             typeof data.hasMore === "boolean"
               ? data.hasMore
-              : typeof data.pagination?.hasMore === "boolean"
-              ? data.pagination.hasMore
-              : targetPage < pages;
+              : combined.length < count;
+          setHasMore(more);
+          return combined;
+        });
 
-          // Store in cache for future instant navigation
-          pageCacheRef.current.set(key, {
-            products: items,
-            totalCount: count,
-            totalPages: pages,
-            hasMore: more,
-            categories: data.categories,
-            difficulties: data.difficulties,
-            unlockProgress: data.unlockProgress,
+        if (typeof data.totalCount === "number") {
+          setTotalCount(data.totalCount);
+        }
+
+        // Save newly fetched 20 items to IndexedDB (async, non-blocking)
+        saveProblemsToCache(newItems).catch(() => {});
+      } else {
+        const errData = await res.json().catch(() => ({}));
+        setLoadMoreError(errData.error || "Failed to load additional problems.");
+      }
+    } catch (networkErr: any) {
+      if (reqId === activeRequestId.current) {
+        // Try reading next batch from IndexedDB cache if available offline
+        try {
+          const currentSkip = products.length;
+          const cached = await getCachedProblemsPage({
+            search: searchQuery,
+            category: selectedCategory,
+            difficulty: selectedDifficulty,
+            skip: currentSkip,
+            limit: 20,
           });
 
-          setProducts(items);
-          setCurrentPage(targetPage);
-          setTotalCount(count);
-          setTotalPages(pages);
-          setHasMore(more);
-          if (data.categories) setCategories(data.categories);
-          if (data.difficulties) setDifficulties(data.difficulties);
-          if (data.unlockProgress) setUnlockProgress(data.unlockProgress);
+          if (cached && cached.problems.length > 0) {
+            const mappedCached: ProductCatalogItem[] = cached.problems.map((p) => ({
+              ...p,
+              userStatus: "not_started",
+              completedPhases: 0,
+              currentPhase: 1,
+              totalPhases: 8,
+              isLocked: false,
+            }));
 
-          mainContentRef.current?.scrollTo({ top: 0, behavior: "smooth" });
-
-          // Prefetch adjacent pages in background
-          if (targetPage + 1 <= pages) {
-            prefetchPage(targetPage + 1);
+            setProducts((prev) => {
+              const existingIds = new Set(prev.map((p) => p.problemId));
+              const uniqueNew = mappedCached.filter((p) => !existingIds.has(p.problemId));
+              const combined = [...prev, ...uniqueNew];
+              setHasMore(combined.length < cached.totalCount);
+              return combined;
+            });
+            setLoadMoreError(null);
+          } else {
+            setLoadMoreError(networkErr.message || "Network error loading more problems.");
           }
-          if (targetPage > 1) {
-            prefetchPage(targetPage - 1);
-          }
-        } else {
-          const errData = await res.json().catch(() => ({}));
-          setError(errData.error || "Unable to load problems catalog.");
-        }
-      } catch (err: any) {
-        if (reqId === activeRequestId.current) {
-          setError(err.message || "Failed to connect to problem database.");
-        }
-      } finally {
-        if (reqId === activeRequestId.current) {
-          setLoading(false);
+        } catch {
+          setLoadMoreError(networkErr.message || "Network error loading more problems.");
         }
       }
-    },
-    [getCacheKey, prefetchPage, searchQuery, selectedCategory, selectedDifficulty, sortOrder]
-  );
-
-  const handlePrevPage = useCallback(() => {
-    if (currentPage > 1 && !loading) {
-      loadPage(currentPage - 1);
+    } finally {
+      if (reqId === activeRequestId.current) {
+        setLoadingMore(false);
+      }
     }
-  }, [currentPage, loading, loadPage]);
+  }, [
+    loadingMore,
+    loading,
+    hasMore,
+    products.length,
+    searchQuery,
+    selectedCategory,
+    selectedDifficulty,
+    sortOrder,
+    totalCount,
+  ]);
 
-  const handleNextPage = useCallback(() => {
-    if (currentPage < totalPages && !loading) {
-      loadPage(currentPage + 1);
-    }
-  }, [currentPage, totalPages, loading, loadPage]);
-
-  // Initial Onboarding Route Guard & Initial Page Load
+  // Initial Onboarding Route Guard & Initial Load / Filter Reset
   useEffect(() => {
     const activeProf = getOnboardingProfile();
     setProfile(activeProf);
@@ -276,10 +506,8 @@ export default function ProductsPage() {
       router.push("/onboarding");
       return;
     }
-    // Clear cache when filters or sort change and load page 1
-    pageCacheRef.current.clear();
-    loadPage(1);
-  }, [router, loadPage]);
+    loadInitialProducts();
+  }, [router, loadInitialProducts]);
 
   // Sidebar Items
   const navItems = [
@@ -291,11 +519,6 @@ export default function ProductsPage() {
   ];
 
   const userInitial = profile?.whoAreYouRole?.charAt(0)?.toUpperCase() ?? "N";
-
-  const handleStartOrContinue = (product: ProductCatalogItem) => {
-    if (product.isLocked) return;
-    router.push(`/journey/${product.problemId}?step=${product.currentPhase || 1}`);
-  };
 
   return (
     <div className="h-screen bg-[#F5F5F0] text-zinc-900 font-sans antialiased selection:bg-teal-700 selection:text-white flex flex-col lg:flex-row overflow-hidden">
@@ -359,7 +582,7 @@ export default function ProductsPage() {
       {/* ================================================================ */}
       {/* MAIN CONTENT                                                       */}
       {/* ================================================================ */}
-      <div ref={mainContentRef} className="flex-1 flex flex-col min-w-0 h-full overflow-y-auto">
+      <div className="flex-1 flex flex-col min-w-0 h-full overflow-y-auto">
         {/* Header */}
         <header className="h-14 border-b border-zinc-200 bg-white px-7 flex items-center justify-between shrink-0 sticky top-0 z-20">
           <div>
@@ -372,10 +595,7 @@ export default function ProductsPage() {
           </div>
 
           <button
-            onClick={() => {
-              pageCacheRef.current.clear();
-              loadPage(currentPage);
-            }}
+            onClick={loadInitialProducts}
             title="Reload Products List"
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-zinc-200 bg-zinc-50 hover:bg-zinc-100 text-zinc-600 text-xs font-mono transition-colors cursor-pointer"
           >
@@ -493,19 +713,13 @@ export default function ProductsPage() {
                 <input
                   type="text"
                   value={searchQuery}
-                  onChange={(e) => {
-                    setSearchQuery(e.target.value);
-                    setCurrentPage(1);
-                  }}
+                  onChange={(e) => setSearchQuery(e.target.value)}
                   placeholder="Search products by Problem ID, Title, Description, or Category..."
                   className="w-full pl-10 pr-4 py-2.5 rounded-xl border border-zinc-200 bg-zinc-50 text-xs font-sans text-zinc-900 focus:outline-none focus:border-teal-700 transition-colors"
                 />
                 {searchQuery && (
                   <button
-                    onClick={() => {
-                      setSearchQuery("");
-                      setCurrentPage(1);
-                    }}
+                    onClick={() => setSearchQuery("")}
                     className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-zinc-600"
                   >
                     <X className="h-3.5 w-3.5" />
@@ -518,10 +732,7 @@ export default function ProductsPage() {
                 <div className="w-full sm:w-48">
                   <select
                     value={selectedCategory}
-                    onChange={(e) => {
-                      setSelectedCategory(e.target.value);
-                      setCurrentPage(1);
-                    }}
+                    onChange={(e) => setSelectedCategory(e.target.value)}
                     className="w-full px-3 py-2.5 rounded-xl border border-zinc-200 bg-zinc-50 text-xs font-mono text-zinc-800 focus:outline-none focus:border-teal-700 cursor-pointer"
                   >
                     <option value="All">Category: All ({totalCount || products.length})</option>
@@ -539,10 +750,7 @@ export default function ProductsPage() {
                 <div className="w-full sm:w-44">
                   <select
                     value={selectedDifficulty}
-                    onChange={(e) => {
-                      setSelectedDifficulty(e.target.value);
-                      setCurrentPage(1);
-                    }}
+                    onChange={(e) => setSelectedDifficulty(e.target.value)}
                     className="w-full px-3 py-2.5 rounded-xl border border-zinc-200 bg-zinc-50 text-xs font-mono text-zinc-800 focus:outline-none focus:border-teal-700 cursor-pointer"
                   >
                     <option value="All">Difficulty: All</option>
@@ -559,10 +767,7 @@ export default function ProductsPage() {
               <div className="w-full sm:w-44">
                 <select
                   value={sortOrder}
-                  onChange={(e) => {
-                    setSortOrder(e.target.value);
-                    setCurrentPage(1);
-                  }}
+                  onChange={(e) => setSortOrder(e.target.value)}
                   className="w-full px-3 py-2.5 rounded-xl border border-zinc-200 bg-zinc-50 text-xs font-mono text-zinc-800 focus:outline-none focus:border-teal-700 cursor-pointer"
                 >
                   <option value="numerical_asc">Sort: P000001 → P...</option>
@@ -582,19 +787,19 @@ export default function ProductsPage() {
                 {searchQuery && (
                   <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-teal-50 border border-teal-100 text-teal-800 text-[11px] font-mono">
                     Search: &quot;{searchQuery}&quot;
-                    <X className="h-3 w-3 cursor-pointer" onClick={() => { setSearchQuery(""); setCurrentPage(1); }} />
+                    <X className="h-3 w-3 cursor-pointer" onClick={() => setSearchQuery("")} />
                   </span>
                 )}
                 {selectedCategory !== "All" && (
                   <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-teal-50 border border-teal-100 text-teal-800 text-[11px] font-mono">
                     Cat: {selectedCategory}
-                    <X className="h-3 w-3 cursor-pointer" onClick={() => { setSelectedCategory("All"); setCurrentPage(1); }} />
+                    <X className="h-3 w-3 cursor-pointer" onClick={() => setSelectedCategory("All")} />
                   </span>
                 )}
                 {selectedDifficulty !== "All" && (
                   <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-teal-50 border border-teal-100 text-teal-800 text-[11px] font-mono">
                     Diff: {selectedDifficulty}
-                    <X className="h-3 w-3 cursor-pointer" onClick={() => { setSelectedDifficulty("All"); setCurrentPage(1); }} />
+                    <X className="h-3 w-3 cursor-pointer" onClick={() => setSelectedDifficulty("All")} />
                   </span>
                 )}
 
@@ -603,7 +808,6 @@ export default function ProductsPage() {
                     setSearchQuery("");
                     setSelectedCategory("All");
                     setSelectedDifficulty("All");
-                    setCurrentPage(1);
                   }}
                   className="text-[11px] font-mono text-teal-700 underline font-semibold ml-auto cursor-pointer"
                 >
@@ -632,10 +836,7 @@ export default function ProductsPage() {
                 <p className="text-xs text-zinc-500 font-sans">{error}</p>
               </div>
               <button
-                onClick={() => {
-                  pageCacheRef.current.clear();
-                  loadPage(currentPage);
-                }}
+                onClick={loadInitialProducts}
                 className="px-5 py-2 rounded-xl bg-teal-800 hover:bg-teal-700 text-white text-xs font-semibold font-sans cursor-pointer transition-all"
               >
                 Retry
@@ -665,224 +866,69 @@ export default function ProductsPage() {
               </button>
             </div>
           ) : (
-            /* PRODUCTS GRID */
+            /* PRODUCTS GRID (MEMOIZED TO AVOID UNNECESSARY RE-RENDERING) */
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-              {products.map((product) => {
-                const isCompleted = product.userStatus === "completed";
-                const isInProgress = product.userStatus === "in_progress";
-                const isLocked = !!product.isLocked;
-
-                return (
-                  <div
-                    key={product.problemId}
-                    className={`bg-white rounded-2xl border ${
-                      isLocked ? "border-rose-200/80 bg-gradient-to-b from-white to-rose-50/20" : "border-zinc-200"
-                    } p-6 space-y-4 shadow-xs hover:shadow-md transition-all flex flex-col justify-between group`}
-                  >
-                    <div className="space-y-3">
-                      {/* Top Badges */}
-                      <div className="flex items-center justify-between gap-2 flex-wrap">
-                        <div className="flex items-center gap-1.5">
-                          <span className="text-[11px] font-mono font-bold bg-teal-50 border border-teal-100 text-teal-800 px-2.5 py-0.5 rounded-md">
-                            {product.problemId}
-                          </span>
-                          {product.category && (
-                            <span className="text-[10px] font-mono text-zinc-500 bg-zinc-100 px-2 py-0.5 rounded-md truncate max-w-[120px]">
-                              {product.category}
-                            </span>
-                          )}
-                        </div>
-
-                        {product.difficulty && (
-                          <span
-                            className={`text-[10px] font-mono font-bold px-2 py-0.5 rounded flex items-center gap-1 ${
-                              isLocked
-                                ? "bg-rose-100 text-rose-800 border border-rose-200"
-                                : product.difficulty === "Beginner"
-                                ? "bg-emerald-50 text-emerald-700 border border-emerald-200"
-                                : product.difficulty === "Intermediate"
-                                ? "bg-amber-50 text-amber-700 border border-amber-200"
-                                : "bg-purple-50 text-purple-700 border border-purple-200"
-                            }`}
-                          >
-                            {isLocked && <Lock className="h-3 w-3 text-rose-600" />}
-                            {product.difficulty} {isLocked ? "🔒" : ""}
-                          </span>
-                        )}
-                      </div>
-
-                      {/* Title */}
-                      <h3
-                        onClick={() => {
-                          if (!isLocked) handleStartOrContinue(product);
-                        }}
-                        className={`text-base font-serif font-bold text-zinc-900 group-hover:text-teal-800 transition-colors line-clamp-2 ${
-                          !isLocked ? "cursor-pointer" : ""
-                        }`}
-                      >
-                        {product.title}
-                      </h3>
-
-                      {/* Description / Context */}
-                      <p className="text-xs text-zinc-600 font-sans leading-relaxed line-clamp-3">
-                        {product.description}
-                      </p>
-
-                      {/* Country / Skills Tags if present */}
-                      {(product.country || (product.skills && product.skills.length > 0)) && (
-                        <div className="flex flex-wrap gap-1 pt-1">
-                          {product.country && (
-                            <span className="text-[10px] font-mono bg-zinc-100 text-zinc-600 px-2 py-0.5 rounded">
-                              📍 {product.country}
-                            </span>
-                          )}
-                          {product.skills.slice(0, 2).map((skill, sIdx) => (
-                            <span
-                              key={sIdx}
-                              className="text-[10px] font-mono bg-teal-50/70 text-teal-800 px-2 py-0.5 rounded border border-teal-100"
-                            >
-                              {skill}
-                            </span>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-
-                    {/* Footer Status & Actions */}
-                    <div className="pt-4 border-t border-zinc-100 space-y-3">
-                      {/* User status badge */}
-                      <div className="flex items-center justify-between text-[11px] font-mono">
-                        <span className="text-zinc-500">Your Status:</span>
-                        <span
-                          className={`font-bold px-2 py-0.5 rounded flex items-center gap-1 ${
-                            isLocked
-                              ? "bg-rose-50 text-rose-700 border border-rose-200"
-                              : isCompleted
-                              ? "bg-emerald-100 text-emerald-800"
-                              : isInProgress
-                              ? "bg-teal-100 text-teal-900"
-                              : "bg-zinc-100 text-zinc-500"
-                          }`}
-                        >
-                          {isLocked ? (
-                            <>
-                              <Lock className="h-3 w-3 text-rose-600" />
-                              <span>Locked</span>
-                            </>
-                          ) : isCompleted ? (
-                            <>
-                              <CheckCircle2 className="h-3 w-3 text-emerald-600" />
-                              <span>Completed ✓</span>
-                            </>
-                          ) : isInProgress ? (
-                            <span>In Progress (Phase {product.currentPhase})</span>
-                          ) : (
-                            <span>Not Started</span>
-                          )}
-                        </span>
-                      </div>
-
-                      {/* Action buttons */}
-                      <div className="grid grid-cols-2 gap-2">
-                        <button
-                          type="button"
-                          onClick={() => setSelectedProduct(product)}
-                          className="px-3 py-2 rounded-xl bg-zinc-100 hover:bg-zinc-200 text-zinc-800 text-xs font-semibold font-sans cursor-pointer transition-all flex items-center justify-center gap-1"
-                        >
-                          <BookOpen className="h-3.5 w-3.5 text-zinc-500" />
-                          <span>View Details</span>
-                        </button>
-
-                        <button
-                          type="button"
-                          disabled={isLocked}
-                          onClick={() => handleStartOrContinue(product)}
-                          className={`px-3 py-2 rounded-xl text-xs font-semibold font-sans transition-all flex items-center justify-center gap-1 ${
-                            isLocked
-                              ? "bg-zinc-200 text-zinc-400 cursor-not-allowed border border-zinc-300"
-                              : isCompleted
-                              ? "bg-emerald-700 hover:bg-emerald-600 text-white cursor-pointer"
-                              : isInProgress
-                              ? "bg-teal-800 hover:bg-teal-700 text-white cursor-pointer"
-                              : "bg-teal-800 hover:bg-teal-700 text-white shadow-xs cursor-pointer"
-                          }`}
-                        >
-                          <span>
-                            {isLocked
-                              ? "🔒 Locked"
-                              : isCompleted
-                              ? "View Journey"
-                              : isInProgress
-                              ? "Continue"
-                              : "Start Building"}
-                          </span>
-                          {!isLocked && <ArrowRight className="h-3.5 w-3.5" />}
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                );
-              })}
+              {products.map((product) => (
+                <ProblemCard
+                  key={product.problemId}
+                  product={product}
+                  onSelect={handleSelectProduct}
+                  onStartOrContinue={handleStartOrContinue}
+                />
+              ))}
             </div>
           )}
 
-          {/* Instant Page-by-Page Pagination Controls */}
+          {/* Incremental Load More Pagination Controls */}
           {products.length > 0 && (
-            <div className="pt-6 border-t border-zinc-200">
-              <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
-                {/* Problems Counter Status */}
-                <div className="text-xs font-mono text-zinc-500">
-                  Showing{" "}
-                  <span className="font-semibold text-zinc-900">
-                    {totalCount > 0 ? (currentPage - 1) * pageSize + 1 : 0}
-                  </span>
-                  –
-                  <span className="font-semibold text-zinc-900">
-                    {Math.min(currentPage * pageSize, totalCount || products.length)}
-                  </span>{" "}
-                  of <span className="font-semibold text-zinc-900">{totalCount || products.length}</span> problem statements
-                </div>
-
-                {/* Page Navigation Controls */}
-                <div className="flex items-center gap-2">
-                  <button
-                    type="button"
-                    id="prev-btn"
-                    disabled={currentPage <= 1 || loading}
-                    onClick={handlePrevPage}
-                    title="Go to previous page"
-                    className={`inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl border text-xs font-mono font-semibold transition-all ${
-                      currentPage <= 1 || loading
-                        ? "border-zinc-200 text-zinc-300 cursor-not-allowed bg-zinc-50"
-                        : "border-zinc-300 text-zinc-700 hover:bg-zinc-100 hover:border-zinc-400 cursor-pointer bg-white shadow-xs"
-                    }`}
-                  >
-                    <ChevronLeft className="h-3.5 w-3.5" />
-                    <span>Previous</span>
-                  </button>
-
-                  <div className="px-3.5 py-2 rounded-xl bg-zinc-100 border border-zinc-200 text-xs font-mono font-medium text-zinc-700">
-                    Page <span className="font-bold text-zinc-900">{currentPage}</span> of{" "}
-                    <span className="font-bold text-zinc-900">{totalPages || 1}</span>
-                  </div>
-
-                  <button
-                    type="button"
-                    id="next-btn"
-                    disabled={currentPage >= totalPages || !hasMore || loading}
-                    onClick={handleNextPage}
-                    title="Go to next page"
-                    className={`inline-flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-mono font-semibold transition-all ${
-                      currentPage >= totalPages || !hasMore || loading
-                        ? "border border-zinc-200 text-zinc-300 cursor-not-allowed bg-zinc-50"
-                        : "bg-teal-800 hover:bg-teal-700 text-white shadow-sm hover:shadow cursor-pointer border border-teal-800"
-                    }`}
-                  >
-                    <span>Next</span>
-                    <ChevronRight className="h-3.5 w-3.5" />
-                  </button>
-                </div>
+            <div className="pt-8 pb-4 flex flex-col items-center justify-center space-y-4 border-t border-zinc-200">
+              <div className="text-xs font-mono text-zinc-500 text-center">
+                Showing <span className="font-semibold text-zinc-900">{products.length}</span> of{" "}
+                <span className="font-semibold text-zinc-900">{totalCount}</span> matching problem statements
               </div>
+
+              {loadMoreError && (
+                <div className="flex items-center gap-2 p-3 bg-rose-50 border border-rose-200 text-rose-700 text-xs rounded-xl">
+                  <AlertCircle className="h-4 w-4 shrink-0 text-rose-600" />
+                  <span>{loadMoreError}</span>
+                  <button
+                    onClick={handleLoadMore}
+                    className="font-bold underline hover:text-rose-900 cursor-pointer ml-2"
+                  >
+                    Retry
+                  </button>
+                </div>
+              )}
+
+              {hasMore ? (
+                <button
+                  type="button"
+                  id="load-more-btn"
+                  disabled={loadingMore || loading}
+                  onClick={handleLoadMore}
+                  className={`px-6 py-2.5 rounded-xl border text-xs font-mono font-semibold transition-all inline-flex items-center gap-2 shadow-xs ${
+                    loadingMore
+                      ? "bg-zinc-100 border-zinc-300 text-zinc-400 cursor-not-allowed"
+                      : "bg-white hover:bg-zinc-50 border-zinc-300 hover:border-zinc-400 text-zinc-800 cursor-pointer"
+                  }`}
+                >
+                  {loadingMore ? (
+                    <>
+                      <RefreshCw className="h-3.5 w-3.5 animate-spin text-teal-700" />
+                      <span>Loading next 20 problems...</span>
+                    </>
+                  ) : (
+                    <>
+                      <span>Load More (+20)</span>
+                      <ChevronRight className="h-3.5 w-3.5 text-zinc-500" />
+                    </>
+                  )}
+                </button>
+              ) : (
+                <div className="text-xs font-mono text-zinc-400 bg-zinc-50 px-4 py-2 rounded-xl border border-zinc-200">
+                  ✓ All {totalCount} matching problems loaded
+                </div>
+              )}
             </div>
           )}
         </main>
