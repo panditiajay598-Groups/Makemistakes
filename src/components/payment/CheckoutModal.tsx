@@ -16,15 +16,39 @@ import {
   CreditCard,
   Building2,
   Smartphone,
-  Copy,
-  Check,
   ChevronLeft,
   User,
   Mail,
   Phone,
 } from "lucide-react";
-import QRCode from "qrcode";
 import { PLANS, PlanTier, PlanConfig } from "@/lib/plans";
+
+type RazorpayCheckoutResponse = {
+  razorpay_payment_id: string;
+  razorpay_order_id: string;
+  razorpay_signature: string;
+};
+
+type RazorpayCheckoutOptions = {
+  key: string;
+  amount: number;
+  currency: string;
+  name: string;
+  description: string;
+  order_id: string;
+  prefill: { name: string; email: string; contact: string };
+  handler: (response: RazorpayCheckoutResponse) => void;
+  modal: { ondismiss: () => void };
+};
+
+type RazorpayCheckout = { open: () => void };
+type RazorpayConstructor = new (options: RazorpayCheckoutOptions) => RazorpayCheckout;
+
+declare global {
+  interface Window {
+    Razorpay?: RazorpayConstructor;
+  }
+}
 
 interface CheckoutModalProps {
   isOpen: boolean;
@@ -60,26 +84,12 @@ export default function CheckoutModal({
   const [step, setStep] = useState<CheckoutStep>("REVIEW");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [verifiedEmail, setVerifiedEmail] = useState<string>(initialEmail || "");
-  const [fullName, setFullName] = useState<string>("Ajay Panditi");
-  const [phoneNumber, setPhoneNumber] = useState<string>("+91 98765 43210");
+  const [fullName, setFullName] = useState<string>("");
+  const [phoneNumber, setPhoneNumber] = useState<string>("");
   const [selectedMethod, setSelectedMethod] = useState<PaymentMethodType>("UPI");
   const [orderData, setOrderData] = useState<any>(null);
   const [activationResult, setActivationResult] = useState<any>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
-
-  // QR & UPI States
-  const [qrCodeUrl, setQrCodeUrl] = useState<string>("");
-  const [copiedUpi, setCopiedUpi] = useState(false);
-  const [timeLeft, setTimeLeft] = useState<number>(600); // 10 minutes
-
-  // Card Form State
-  const [cardNumber, setCardNumber] = useState<string>("4532 8901 2345 6789");
-  const [cardExpiry, setCardExpiry] = useState<string>("12/28");
-  const [cardCvv, setCardCvv] = useState<string>("888");
-  const [cardName, setCardName] = useState<string>(fullName || "Ajay Panditi");
-
-  // NetBanking State
-  const [selectedBank, setSelectedBank] = useState<string>("HDFC");
 
   const plan: PlanConfig = PLANS[selectedPlan] || PLANS.PRO;
 
@@ -88,8 +98,6 @@ export default function CheckoutModal({
       setStep("REVIEW");
       setErrorMessage(null);
       setActivationResult(null);
-      setTimeLeft(600);
-
       // Fetch active user email from localStorage or session
       if (typeof window !== "undefined") {
         const storedEmail = localStorage.getItem("user_email") || "";
@@ -97,52 +105,6 @@ export default function CheckoutModal({
       }
     }
   }, [isOpen, selectedPlan]);
-
-  // Generate real QR code whenever order or QR step is active
-  useEffect(() => {
-    if (step === "QR_PAYMENT") {
-      const upiId = "makemistakes@icici";
-      const orderRef = orderData?.orderId || `ord_mm_${Date.now()}`;
-      const upiPayload = `upi://pay?pa=${upiId}&pn=MakeMistakes%20Academy&am=${plan.price}.00&cu=INR&tn=${encodeURIComponent(
-        `${plan.name} - ${orderRef}`
-      )}`;
-
-      QRCode.toDataURL(upiPayload, {
-        width: 260,
-        margin: 1,
-        color: {
-          dark: "#042f2e", // deep rich teal
-          light: "#ffffff",
-        },
-        errorCorrectionLevel: "M",
-      })
-        .then((url) => setQrCodeUrl(url))
-        .catch((err) => console.error("QR Code generation error:", err));
-    }
-  }, [step, plan.price, plan.name, orderData]);
-
-  // QR Countdown Timer
-  useEffect(() => {
-    if (step !== "QR_PAYMENT") return;
-    const timer = setInterval(() => {
-      setTimeLeft((prev) => (prev > 0 ? prev - 1 : 0));
-    }, 1000);
-    return () => clearInterval(timer);
-  }, [step]);
-
-  const formatTimer = (seconds: number) => {
-    const m = Math.floor(seconds / 60);
-    const s = seconds % 60;
-    return `${m.toString().padStart(2, "0")}:${s.toString().padStart(2, "0")}`;
-  };
-
-  const handleCopyUpiId = () => {
-    if (typeof navigator !== "undefined" && navigator.clipboard) {
-      navigator.clipboard.writeText("makemistakes@icici");
-      setCopiedUpi(true);
-      setTimeout(() => setCopiedUpi(false), 2500);
-    }
-  };
 
   if (!isOpen) return null;
 
@@ -242,9 +204,68 @@ export default function CheckoutModal({
 
   const handleSimulatePayment = async () => {
     if (!orderData) return;
-    const mockPaymentId = orderData.sandboxPaymentId || `pay_upi_${Date.now()}`;
-    const mockSig = orderData.sandboxSignature || "sandbox_sig_auto_generate";
-    await handleVerifyPayment(orderData.orderId, mockPaymentId, mockSig);
+    if (
+      orderData.gateway === "SANDBOX" &&
+      process.env.NODE_ENV !== "production" &&
+      orderData.sandboxPaymentId &&
+      orderData.sandboxSignature
+    ) {
+      await handleVerifyPayment(
+        orderData.orderId,
+        orderData.sandboxPaymentId,
+        orderData.sandboxSignature
+      );
+      return;
+    }
+
+    if (orderData.gateway !== "RAZORPAY" || !orderData.keyId || !orderData.gatewayOrderId) {
+      setErrorMessage("Secure payment checkout is unavailable. Please try again later.");
+      return;
+    }
+
+    try {
+      if (!window.Razorpay) {
+        await new Promise<void>((resolve, reject) => {
+          const script = document.createElement("script");
+          script.src = "https://checkout.razorpay.com/v1/checkout.js";
+          script.onload = () => resolve();
+          script.onerror = () => reject(new Error("Unable to load payment checkout."));
+          document.body.appendChild(script);
+        });
+      }
+
+      if (!window.Razorpay) {
+        throw new Error("Secure payment checkout is unavailable.");
+      }
+
+      const checkout = new window.Razorpay({
+        key: orderData.keyId,
+        amount: orderData.amount,
+        currency: orderData.currency,
+        name: "MakeMistakes",
+        description: orderData.planName,
+        order_id: orderData.gatewayOrderId,
+        prefill: {
+          name: fullName,
+          email: orderData.userEmail || verifiedEmail,
+          contact: phoneNumber,
+        },
+        handler: (response) => {
+          void handleVerifyPayment(
+            orderData.orderId,
+            response.razorpay_payment_id,
+            response.razorpay_signature
+          );
+        },
+        modal: {
+          ondismiss: () => setErrorMessage("Payment was not completed."),
+        },
+      });
+      checkout.open();
+    } catch (error) {
+      console.error("Razorpay checkout could not be opened:", error);
+      setErrorMessage("Unable to open secure payment checkout. Please try again.");
+    }
   };
 
   const handleCheckStatus = async () => {
@@ -605,7 +626,7 @@ export default function CheckoutModal({
         )}
 
         {/* ============================================================== */}
-        {/* STEP 4a: QR CODE PAYMENT SCREEN (Requested by user)           */}
+        {/* STEP 4a: SECURE PAYMENT CHECKOUT                             */}
         {/* ============================================================== */}
         {step === "QR_PAYMENT" && (
           <div className="space-y-4 text-center animate-in fade-in duration-200">
@@ -617,102 +638,23 @@ export default function CheckoutModal({
                 <ChevronLeft className="w-4 h-4" />
                 <span>Change Method</span>
               </button>
-              <div className="flex items-center gap-1.5 text-xs font-mono text-amber-400 bg-amber-500/10 px-2.5 py-0.5 rounded-full border border-amber-500/20">
-                <Clock className="w-3.5 h-3.5" />
-                <span>Expires in {formatTimer(timeLeft)}</span>
-              </div>
             </div>
 
             <div>
               <h2 className="text-xl sm:text-2xl font-bold font-serif text-white tracking-tight">
-                Scan & Pay with Any UPI App
+                Continue to Secure Checkout
               </h2>
               <p className="text-xs text-zinc-400 mt-1">
-                Scan the dynamic QR code with Google Pay, PhonePe, Paytm, or BHIM.
+                Payment details are handled by Razorpay. MakeMistakes activates your plan only after Razorpay confirms a captured payment.
               </p>
             </div>
 
-            {/* QR Card Container */}
-            <div className="p-4 bg-white rounded-2xl border-2 border-teal-500/80 shadow-xl inline-block mx-auto relative group">
-              {qrCodeUrl ? (
-                <img
-                  src={qrCodeUrl}
-                  alt="MakeMistakes UPI Payment QR Code"
-                  className="w-52 h-52 sm:w-56 sm:h-56 mx-auto rounded-lg"
-                />
-              ) : (
-                <div className="w-52 h-52 sm:w-56 sm:h-56 flex items-center justify-center text-xs text-zinc-500 font-mono">
-                  Generating secure UPI QR...
-                </div>
-              )}
-
-              {/* Amount Overlay Badge */}
-              <div className="mt-2 text-center">
-                <span className="inline-block px-3 py-1 rounded-full bg-teal-900 text-teal-100 font-mono text-xs font-bold tracking-tight">
-                  ₹{plan.price.toLocaleString("en-IN")} • {plan.name}
-                </span>
-              </div>
-            </div>
-
-            {/* Copy UPI ID Section */}
-            <div className="p-3 bg-zinc-900 border border-zinc-800 rounded-xl flex items-center justify-between text-xs max-w-sm mx-auto">
-              <div className="text-left">
-                <span className="text-[10px] font-mono text-zinc-400 uppercase font-bold block">
-                  Official Merchant UPI ID
-                </span>
-                <span className="font-mono text-zinc-200 font-bold">
-                  makemistakes@icici
-                </span>
-              </div>
-              <button
-                onClick={handleCopyUpiId}
-                className="px-3 py-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-teal-400 font-mono text-xs flex items-center gap-1.5 transition-colors cursor-pointer"
-              >
-                {copiedUpi ? (
-                  <>
-                    <Check className="w-3.5 h-3.5 text-emerald-400" />
-                    <span className="text-emerald-400">Copied!</span>
-                  </>
-                ) : (
-                  <>
-                    <Copy className="w-3.5 h-3.5" />
-                    <span>Copy ID</span>
-                  </>
-                )}
-              </button>
-            </div>
-
-            {/* Supported UPI Apps Row */}
-            <div className="text-center pt-1">
-              <span className="text-[10px] font-mono text-zinc-500 block uppercase font-bold mb-2">
-                Accepted Apps
-              </span>
-              <div className="flex items-center justify-center gap-2 flex-wrap text-[11px] font-mono">
-                <span className="px-2.5 py-1 rounded-lg bg-zinc-900 border border-zinc-800 text-zinc-300">
-                  Google Pay
-                </span>
-                <span className="px-2.5 py-1 rounded-lg bg-zinc-900 border border-zinc-800 text-zinc-300">
-                  PhonePe
-                </span>
-                <span className="px-2.5 py-1 rounded-lg bg-zinc-900 border border-zinc-800 text-zinc-300">
-                  Paytm
-                </span>
-                <span className="px-2.5 py-1 rounded-lg bg-zinc-900 border border-zinc-800 text-zinc-300">
-                  BHIM
-                </span>
-                <span className="px-2.5 py-1 rounded-lg bg-zinc-900 border border-zinc-800 text-zinc-300">
-                  CRED
-                </span>
-              </div>
-            </div>
-
-            {/* Waiting Radar Pulse */}
             <div className="flex items-center justify-center gap-2 text-xs font-mono text-teal-400 pt-1">
               <span className="relative flex h-2.5 w-2.5">
                 <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-teal-400 opacity-75"></span>
                 <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-teal-500"></span>
               </span>
-              <span>Awaiting payment approval from banking network...</span>
+              <span>Payment options and approval are provided by Razorpay.</span>
             </div>
 
             {/* Action Buttons */}
@@ -722,7 +664,7 @@ export default function CheckoutModal({
                 className="w-full py-3.5 rounded-2xl bg-teal-600 hover:bg-teal-500 text-white font-semibold text-xs sm:text-sm transition-all shadow-lg shadow-teal-600/20 flex items-center justify-center gap-2 cursor-pointer"
               >
                 <CheckCircle2 className="w-4 h-4" />
-                <span>✓ I Have Completed Payment</span>
+                <span>{orderData?.gateway === "SANDBOX" ? "Complete test payment" : "Open secure checkout"}</span>
               </button>
 
               <button
@@ -730,7 +672,7 @@ export default function CheckoutModal({
                 className="w-full py-2.5 rounded-xl border border-teal-500/30 bg-teal-500/10 hover:bg-teal-500/20 text-teal-300 font-mono text-xs transition-colors cursor-pointer flex items-center justify-center gap-1.5"
               >
                 <Zap className="w-3.5 h-3.5 text-amber-400" />
-                <span>Simulate Successful UPI Scan (Instant Test)</span>
+                <span>{orderData?.gateway === "SANDBOX" ? "Simulate successful test payment" : "Pay securely with Razorpay"}</span>
               </button>
             </div>
           </div>
@@ -756,67 +698,11 @@ export default function CheckoutModal({
 
             <div>
               <h2 className="text-xl sm:text-2xl font-bold font-serif text-white tracking-tight">
-                Enter Card Details
+                Pay by Card
               </h2>
               <p className="text-xs text-zinc-400 mt-1">
-                256-bit encrypted checkout for {plan.name} (₹{plan.price.toLocaleString("en-IN")}).
+                Enter card details only in Razorpay’s secure checkout. MakeMistakes does not collect or store card numbers or CVV.
               </p>
-            </div>
-
-            <div className="space-y-3 pt-1">
-              <div className="space-y-1.5">
-                <label className="text-xs font-mono text-zinc-300 font-semibold">
-                  Card Number
-                </label>
-                <input
-                  type="text"
-                  value={cardNumber}
-                  onChange={(e) => setCardNumber(e.target.value)}
-                  className="w-full bg-zinc-900 border border-zinc-700 focus:border-teal-500 rounded-xl px-3.5 py-2.5 text-xs text-white font-mono focus:outline-none"
-                  placeholder="4532 8901 2345 6789"
-                />
-              </div>
-
-              <div className="space-y-1.5">
-                <label className="text-xs font-mono text-zinc-300 font-semibold">
-                  Cardholder Name
-                </label>
-                <input
-                  type="text"
-                  value={cardName}
-                  onChange={(e) => setCardName(e.target.value)}
-                  className="w-full bg-zinc-900 border border-zinc-700 focus:border-teal-500 rounded-xl px-3.5 py-2.5 text-xs text-white focus:outline-none"
-                  placeholder="Ajay Panditi"
-                />
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div className="space-y-1.5">
-                  <label className="text-xs font-mono text-zinc-300 font-semibold">
-                    Valid Thru (MM/YY)
-                  </label>
-                  <input
-                    type="text"
-                    value={cardExpiry}
-                    onChange={(e) => setCardExpiry(e.target.value)}
-                    className="w-full bg-zinc-900 border border-zinc-700 focus:border-teal-500 rounded-xl px-3.5 py-2.5 text-xs text-white font-mono focus:outline-none text-center"
-                    placeholder="MM/YY"
-                  />
-                </div>
-                <div className="space-y-1.5">
-                  <label className="text-xs font-mono text-zinc-300 font-semibold">
-                    CVV / CVC
-                  </label>
-                  <input
-                    type="password"
-                    maxLength={4}
-                    value={cardCvv}
-                    onChange={(e) => setCardCvv(e.target.value)}
-                    className="w-full bg-zinc-900 border border-zinc-700 focus:border-teal-500 rounded-xl px-3.5 py-2.5 text-xs text-white font-mono focus:outline-none text-center"
-                    placeholder="•••"
-                  />
-                </div>
-              </div>
             </div>
 
             <button
@@ -824,7 +710,7 @@ export default function CheckoutModal({
               className="w-full py-3.5 rounded-2xl bg-teal-600 hover:bg-teal-500 text-white font-semibold text-xs sm:text-sm transition-all shadow-lg shadow-teal-600/20 flex items-center justify-center gap-2 cursor-pointer"
             >
               <Lock className="w-4 h-4" />
-              <span>Pay ₹{plan.price.toLocaleString("en-IN")} Securely</span>
+              <span>Continue to secure checkout</span>
             </button>
           </div>
         )}
@@ -849,35 +735,18 @@ export default function CheckoutModal({
 
             <div>
               <h2 className="text-xl sm:text-2xl font-bold font-serif text-white tracking-tight">
-                Select Your Bank
+                Choose your payment method securely
               </h2>
               <p className="text-xs text-zinc-400 mt-1">
-                You will be redirected to your bank's secure portal to authorize ₹{plan.price.toLocaleString("en-IN")}.
+                Select net banking or another supported method in the Razorpay checkout. Payment credentials are not entered on this site.
               </p>
-            </div>
-
-            <div className="grid grid-cols-2 gap-2.5 pt-1">
-              {["HDFC", "ICICI", "SBI", "Axis", "Kotak", "PNB"].map((bank) => (
-                <button
-                  key={bank}
-                  onClick={() => setSelectedBank(bank)}
-                  className={`p-3 rounded-xl border text-left transition-all cursor-pointer font-mono text-xs flex items-center justify-between ${
-                    selectedBank === bank
-                      ? "border-teal-500 bg-teal-500/15 text-white font-bold"
-                      : "border-zinc-800 bg-zinc-900 text-zinc-300 hover:border-zinc-700"
-                  }`}
-                >
-                  <span>{bank} Bank</span>
-                  {selectedBank === bank && <Check className="w-3.5 h-3.5 text-teal-400" />}
-                </button>
-              ))}
             </div>
 
             <button
               onClick={handleSimulatePayment}
               className="w-full py-3.5 rounded-2xl bg-teal-600 hover:bg-teal-500 text-white font-semibold text-xs sm:text-sm transition-all shadow-lg shadow-teal-600/20 flex items-center justify-center gap-2 cursor-pointer"
             >
-              <span>Pay via {selectedBank} NetBanking &rarr;</span>
+              <span>Continue to secure checkout</span>
             </button>
           </div>
         )}

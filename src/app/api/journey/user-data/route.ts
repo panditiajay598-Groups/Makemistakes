@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 import { getDb } from "@/lib/mongodb";
 import { applyNoStoreHeaders } from "@/lib/cacheHeaders";
 import { getAuthSession } from "@/lib/authSession";
+import { redactGithubAccessToken } from "@/lib/security/githubOAuth";
+import { migrateStoredJourneyPhase } from "@/lib/nova/projectProgress";
 
 const COLLECTION_NAME = "user_journeys";
 async function getCollection() {
@@ -84,13 +86,25 @@ const DEFAULT_PHASES = {
 
 /**
  * Compute the maximum unlocked phase based on completed phase data and saved progress.
- * Uses non-cascading logic so that higher phase data automatically unlocks all preceding phases.
+ *
+ * Uses non-cascading logic so that higher phase data automatically unlocks all preceding
+ * phases. The approved nine-phase sequence is:
+ *   1 Discover, 2 Research, 3 Design, 4 Plan, 5 Build,
+ *   6 Test, 7 Push to GitHub, 8 Deploy, 9 Validate
  */
 export function computeMaxAllowedPhase(phases: any, currentPhase?: number | null): number {
   const p = phases || {};
   const isValidateDone = Boolean(p?.validate?.liveUrl);
-  const isDeployDone = isValidateDone || Boolean(p?.deploy?.githubRepoUrl) || Boolean(p?.deploy?.connected);
-  const isTestDone = isDeployDone || Boolean(p?.test?.finalSummary?.trim()) || (Array.isArray(p?.test?.scenarios) && p.test.scenarios.length > 0);
+  const isDeployDone =
+    isValidateDone ||
+    Boolean(p?.deploy?.liveUrl) ||
+    Boolean(p?.deploy?.deploymentStatus && p.deploy.deploymentStatus !== "pending");
+  const isPushDone =
+    isDeployDone ||
+    Boolean(p?.deploy?.githubRepoUrl) ||
+    Boolean(p?.deploy?.isPushed) ||
+    Boolean(p?.deploy?.connected);
+  const isTestDone = isPushDone || Boolean(p?.test?.finalSummary?.trim()) || (Array.isArray(p?.test?.scenarios) && p.test.scenarios.length > 0);
   const isBuildDone = isTestDone || p?.build?.status === "completed" || Boolean(p?.build?.completed);
   const isPlanDone = isBuildDone || (Array.isArray(p?.plan?.modules) && p.plan.modules.length > 0);
   const isDesignDone = isPlanDone || Boolean(p?.design?.productGoal?.trim());
@@ -98,12 +112,14 @@ export function computeMaxAllowedPhase(phases: any, currentPhase?: number | null
   const isDiscoverDone = isResearchDone || Boolean(p?.discover?.completed);
 
   let maxAllowed = 1;
-  if (isDeployDone) maxAllowed = 8;
-  else if (isTestDone) maxAllowed = 7;
-  else if (isBuildDone) maxAllowed = 6;
-  else if (isPlanDone) maxAllowed = 5;
-  else if (isDesignDone) maxAllowed = 4;
-  else if (isResearchDone) maxAllowed = 3;
+  if (isValidateDone) maxAllowed = 9;
+  else if (isDeployDone) maxAllowed = 8;
+  else if (isPushDone) maxAllowed = 7;
+  else if (isTestDone) maxAllowed = 6;
+  else if (isBuildDone) maxAllowed = 5;
+  else if (isPlanDone) maxAllowed = 4;
+  else if (isDesignDone) maxAllowed = 3;
+  else if (isResearchDone) maxAllowed = 2;
   else if (isDiscoverDone) maxAllowed = 2;
 
   // Preserve any higher unlocked phase recorded in the database
@@ -111,7 +127,7 @@ export function computeMaxAllowedPhase(phases: any, currentPhase?: number | null
     maxAllowed = Math.max(maxAllowed, currentPhase);
   }
 
-  return Math.max(1, Math.min(8, maxAllowed));
+  return Math.max(1, Math.min(9, maxAllowed));
 }
 
 /** GET — Load user's journey data strictly scoped by verified session + problemId */
@@ -171,9 +187,10 @@ export async function GET(req: Request) {
       ...(journey.phases || {}),
     };
 
-    const maxAllowedPhase = computeMaxAllowedPhase(mergedPhases, journey.currentPhase);
     const rawPhase = typeof journey.currentPhase === "number" && journey.currentPhase >= 1 ? journey.currentPhase : 1;
-    const safeCurrentPhase = Math.min(rawPhase, maxAllowedPhase);
+    const migratedPhase = migrateStoredJourneyPhase(rawPhase, mergedPhases);
+    const maxAllowedPhase = computeMaxAllowedPhase(mergedPhases, migratedPhase);
+    const safeCurrentPhase = Math.min(migratedPhase, maxAllowedPhase);
 
     return applyNoStoreHeaders(
       NextResponse.json({
@@ -183,7 +200,7 @@ export async function GET(req: Request) {
         currentPhase: safeCurrentPhase,
         maxAllowedPhase,
         status: journey.status || "in_progress",
-        phases: mergedPhases,
+        phases: redactGithubAccessToken(mergedPhases),
         lastSavedAt: journey.lastSavedAt || journey.updatedAt,
         lastActivityAt: journey.lastActivityAt || journey.updatedAt,
         updatedAt: journey.updatedAt,
@@ -227,7 +244,7 @@ export async function POST(req: Request) {
     const problemId = (body.problemId || "").toString().trim();
     const phase = (body.phase || "").toString().trim().toLowerCase();
     const currentPhase = typeof body.currentPhase === "number" ? body.currentPhase : (body.currentPhase ? parseInt(body.currentPhase, 10) : null);
-    const data = body.data;
+    const submittedData = body.data;
     const customStatus = body.status;
 
     if (!problemId) {
@@ -252,6 +269,49 @@ export async function POST(req: Request) {
       updatedAt: now,
     };
 
+    const allowedPhases = new Set([
+      "discover",
+      "research",
+      "design",
+      "plan",
+      "build",
+      "test",
+      "deploy",
+      "improve",
+      "validate",
+    ]);
+    if (phase && !allowedPhases.has(phase)) {
+      return applyNoStoreHeaders(
+        NextResponse.json({ error: "Invalid journey phase" }, { status: 400 })
+      );
+    }
+
+    let data = submittedData;
+    if (phase === "deploy" && data && typeof data === "object" && !Array.isArray(data)) {
+      const safeDeployData = { ...data };
+      const protectedDeployFields = [
+        "githubAccessToken",
+        "githubUsername",
+        "githubAvatarUrl",
+        "connectedAt",
+        "githubRepoUrl",
+        "isPushed",
+        "pushedAt",
+      ];
+      for (const field of protectedDeployFields) {
+        delete safeDeployData[field];
+      }
+      const existingDeploy = existingDoc?.phases?.deploy || {};
+      for (const field of protectedDeployFields) {
+        if (existingDeploy[field] !== undefined) {
+          safeDeployData[field] = existingDeploy[field];
+        }
+      }
+      data = {
+        ...safeDeployData,
+      };
+    }
+
     if (phase && data !== undefined) {
       setFields[`phases.${phase}`] = data;
     }
@@ -262,7 +322,10 @@ export async function POST(req: Request) {
         ...(phase && data !== undefined ? { [phase]: data } : {}),
       };
 
-      const maxPhase = computeMaxAllowedPhase(currentPhases, existingDoc?.currentPhase);
+      const maxPhase = computeMaxAllowedPhase(
+        currentPhases,
+        migrateStoredJourneyPhase(existingDoc?.currentPhase, currentPhases)
+      );
 
       // Protect against progress reset: never downgrade currentPhase unless explicitly requested with reset: true
       const isExplicitReset = Boolean(body.reset);

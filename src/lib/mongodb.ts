@@ -1,9 +1,10 @@
-import { initDns } from "./dns";
+import { getDnsStatus, initDns } from "./dns";
 
 // Ensure DNS is configured for MongoDB Atlas SRV record resolution prior to driver initialization
 initDns();
 
-import { MongoClient, type Db, type MongoClientOptions } from "mongodb";
+import type { Db, MongoClient, MongoClientOptions } from "mongodb";
+import { connectToConfiguredMongo } from "./security/mongoConnection";
 
 
 interface MongoCache {
@@ -13,7 +14,6 @@ interface MongoCache {
 }
 
 declare global {
-  // eslint-disable-next-line no-var
   var __mongoCache: MongoCache | undefined;
 }
 
@@ -34,6 +34,48 @@ const mongoOptions: MongoClientOptions = {
   connectTimeoutMS: 10000,
 };
 
+function getErrorCode(error: unknown): string | number | undefined {
+  if (!error || typeof error !== "object") return undefined;
+  const code = "code" in error ? error.code : undefined;
+  if (typeof code === "string" || typeof code === "number") return code;
+  if ("message" in error && typeof error.message === "string") {
+    return error.message.match(/\b(ECONNREFUSED|ENOTFOUND|EAI_AGAIN|ETIMEDOUT)\b/)?.[0];
+  }
+  return undefined;
+}
+
+function isDnsResolutionError(error: unknown): boolean {
+  if (!error || typeof error !== "object" || !("message" in error)) return false;
+  const message = typeof error.message === "string" ? error.message.toLowerCase() : "";
+  const code = getErrorCode(error);
+  return (
+    message.includes("querysrv") ||
+    message.includes("querytxt") ||
+    ["ECONNREFUSED", "ENOTFOUND", "EAI_AGAIN", "ETIMEDOUT"].includes(String(code))
+  );
+}
+
+function getSafeHost(uri: string): string | undefined {
+  try {
+    return new URL(uri).hostname;
+  } catch {
+    return undefined;
+  }
+}
+
+function logConnectionFailure(error: unknown, uri: string): void {
+  const details = {
+    host: getSafeHost(uri),
+    code: getErrorCode(error),
+    resolvers: getDnsStatus().servers,
+  };
+  if (isDnsResolutionError(error)) {
+    console.error("[mongodb] DNS resolution failed while connecting to MongoDB.", details);
+  } else {
+    console.error("[mongodb] MongoDB connection failed.", details);
+  }
+}
+
 /**
  * Returns a cached, connected MongoClient instance.
  * - Concurrency-safe: shares connection promise during initialization across concurrent requests.
@@ -50,7 +92,7 @@ export async function getMongoClient(): Promise<MongoClient> {
   // If URI changed, reset and clean up old client
   if (cache.uri && cache.uri !== uri) {
     if (cache.client) {
-      await cache.client.close().catch(() => {});
+      await cache.client.close();
     }
     cache.client = null;
     cache.promise = null;
@@ -62,34 +104,45 @@ export async function getMongoClient(): Promise<MongoClient> {
 
   if (!cache.promise) {
     cache.uri = uri;
-    const connectWithFallback = async (): Promise<MongoClient> => {
-      try {
-        const client = new MongoClient(uri, mongoOptions);
-        return await client.connect();
-      } catch (err: any) {
-        // Fallback for Windows local development when ISP/router blocks Atlas SRV DNS queries
-        if (
-          (err?.code === "ECONNREFUSED" || err?.message?.includes("querySrv ECONNREFUSED")) &&
-          uri.includes("cluster0.r8egjr5.mongodb.net")
-        ) {
-          const userPassMatch = uri.match(/mongodb\+srv:\/\/([^@]+)@/);
-          if (userPassMatch) {
-            const creds = userPassMatch[1];
-            const seedUri = `mongodb://${creds}@ac-auvx5mt-shard-00-00.r8egjr5.mongodb.net:27017,ac-auvx5mt-shard-00-01.r8egjr5.mongodb.net:27017,ac-auvx5mt-shard-00-02.r8egjr5.mongodb.net:27017/makemistakes?ssl=true&authSource=admin&replicaSet=atlas-88c9r5-shard-0&retryWrites=true&w=majority`;
-            const fallbackClient = new MongoClient(seedUri, mongoOptions);
-            return await fallbackClient.connect();
-          }
-        }
-        throw err;
-      }
+    console.info("[mongodb] Connecting to MongoDB.", {
+      host: getSafeHost(uri),
+      resolvers: getDnsStatus().servers,
+    });
+    const connectToMongo = async () => {
+      initDns();
+      const { MongoClient } = await import("mongodb");
+      return connectToConfiguredMongo(uri, (configuredUri) =>
+        new MongoClient(configuredUri, mongoOptions).connect()
+      );
     };
 
-    cache.promise = connectWithFallback()
+    cache.promise = connectToMongo()
       .then((connectedClient) => {
         cache.client = connectedClient;
+        const host = getSafeHost(uri);
+        console.info("[mongodb] Connected to MongoDB.", {
+          host,
+          resolvers: getDnsStatus().servers,
+        });
+
+        let connectionInterrupted = false;
+        connectedClient.on("serverHeartbeatFailed", (event) => {
+          if (connectionInterrupted) return;
+          connectionInterrupted = true;
+          console.warn("[mongodb] MongoDB connection interrupted; the driver will retry.", {
+            host,
+            code: getErrorCode(event.failure),
+          });
+        });
+        connectedClient.on("serverHeartbeatSucceeded", () => {
+          if (!connectionInterrupted) return;
+          connectionInterrupted = false;
+          console.info("[mongodb] MongoDB connection recovered.", { host });
+        });
         return connectedClient;
       })
       .catch((err) => {
+        logConnectionFailure(err, uri);
         // Clear cache so next request can retry cleanly
         cache.client = null;
         cache.promise = null;

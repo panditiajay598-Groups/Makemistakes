@@ -29,7 +29,7 @@ Traditional learning platforms force engineering students to watch endless video
 ### 2. Premium Authentication Hub (`/auth`)
 - **Split-Screen Desktop Architecture**: Branding & telemetry preview panel on the left; form canvas on the right.
 - **Dual Persona Portals**: Dedicated paths for **Student / Builder** (`/auth/student/*`) and **Recruiter** (`/auth/recruiter/*`).
-- **Interactive Security Components**: Password strength evaluators, required mobile number privacy callouts, Google OAuth, link recovery (`/auth/forgot-password`), and 6-digit OTP verification (`/auth/verify`).
+- **Authentication**: Email-based 6-digit OTP verification (`/auth/verify`), link recovery (`/auth/forgot-password`), and password strength feedback. Social sign-in is currently unavailable.
 
 ### 3. Apple & Linear 6-Screen Onboarding (`/onboarding`)
 - **Screen 1 (Welcome)**: Platform mission & Proof-of-Work execution briefing.
@@ -106,6 +106,40 @@ Ensure you have **Node.js 18+** installed.
 
 4. **Open in browser:**
    Navigate to [http://localhost:3000](http://localhost:3000).
+
+---
+
+## 🔐 Required Security Configuration
+
+Configure these values in the server environment before starting the application:
+
+- `JWT_ACCESS_SECRET`: a private, randomly generated secret with at least 32 bytes. Keep the same value across application instances and restarts.
+- `GITHUB_TOKEN_ENCRYPTION_KEY`: base64 encoding of exactly 32 cryptographically random bytes. Required for GitHub account linking and token storage.
+- `GITHUB_CLIENT_ID` and `GITHUB_CLIENT_SECRET`: server-side GitHub OAuth application credentials.
+
+Generate secret values with a trusted password manager or a cryptographically secure random generator. Do not commit them, expose them through `NEXT_PUBLIC_*` variables, or include them in logs. Changing `JWT_ACCESS_SECRET` invalidates existing sessions; deploy a replacement value during a planned maintenance window and require users to sign in again. Tokens created with the former hardcoded development key are not accepted. Changing `GITHUB_TOKEN_ENCRYPTION_KEY` makes previously encrypted GitHub tokens unreadable; revoke and reconnect those accounts or perform a controlled re-encryption migration before rotating it.
+
+The GitHub encryption key must remain stable across deployments. Existing plaintext GitHub tokens are encrypted when used by the GitHub push workflow; new connections are encrypted immediately.
+
+Run the isolated security-helper tests with `node --test tests/security/security.test.mjs`.
+
+### MongoDB Atlas DNS configuration
+
+Local development uses the configured `DNS_SERVERS` list when provided, or falls back to
+`8.8.8.8`, `1.1.1.1`, and `8.8.4.4` outside production. Production preserves the deployment
+platform's DNS settings by default. To explicitly configure resolvers, set `DNS_SERVERS` to a
+comma-separated list; `DNS_FALLBACK=true` opts production into the local fallback list.
+`DISABLE_CUSTOM_DNS=true` or `DNS_FALLBACK=false` leaves the system resolver untouched.
+
+Use the DNS settings appropriate for the host or VPC; do not override managed production DNS
+unless the deployment environment requires it.
+
+### Email and payment configuration
+
+- Production OTP delivery requires a working `SMTP_USER`/`SMTP_PASS` (and optional `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURE`, `SMTP_FROM`) or `RESEND_API_KEY` with `RESEND_FROM`. Ethereal previews are available only in local development.
+- Production checkout requires `RAZORPAY_KEY_ID`, `RAZORPAY_KEY_SECRET`, and `RAZORPAY_WEBHOOK_SECRET`. Missing gateway configuration or order creation failures stop checkout; production does not fall back to sandbox.
+- Local payment simulation requires both `PAYMENT_SANDBOX_ENABLED=true` and a dedicated `PAYMENT_SANDBOX_SECRET` of at least 32 bytes. Sandbox mode is rejected in production and must never be enabled in a production environment.
+- Razorpay webhook configuration must use the exact webhook signing secret configured in the Razorpay dashboard. Never reuse the JWT signing secret.
 
 ---
 

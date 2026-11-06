@@ -40,18 +40,27 @@ export async function POST(req: Request) {
       success: true,
       order: orderData,
     });
-  } catch (err: any) {
-    console.error("[Create Order Error]:", err);
-    const status = err.message?.includes("UNAUTHORIZED")
+  } catch (err: unknown) {
+    const code = err instanceof Error ? err.message : "";
+    if (code.startsWith("PAYMENT_UNAVAILABLE:")) {
+      console.error("[Create Order Error]: Payment gateway is unavailable.");
+    } else {
+      console.error("[Create Order Error]:", err);
+    }
+    const status = code.includes("UNAUTHORIZED")
       ? 401
-      : err.message?.includes("INVALID_PLAN")
+      : code.includes("INVALID_PLAN")
       ? 400
+      : code.includes("PAYMENT_UNAVAILABLE")
+      ? 503
       : 500;
 
     return NextResponse.json(
       {
         success: false,
-        error: err.message || "Failed to create payment order.",
+        error: code.includes("INVALID_PLAN")
+          ? "Invalid subscription plan."
+          : "Unable to create a payment order.",
       },
       { status }
     );

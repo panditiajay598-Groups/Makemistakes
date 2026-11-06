@@ -1,4 +1,4 @@
-import type { ProblemBuildSpec, ProblemBuildTask, ProblemData } from "@/lib/problemContent";
+import type { ProblemBuildSpec, ProblemData } from "@/lib/problemContent";
 
 export type ResponsibilityLevel =
   | "starter"
@@ -12,6 +12,7 @@ export type StepOwnership = "provided" | "student";
 
 export interface DerivedBuildTask {
   id: number;
+  dependsOn?: number[];
   title: string;
   description: string;
   /** Plain-English coach card (Antigravity-style "What this means"). */
@@ -355,6 +356,7 @@ function fromAuthoredSpec(
       : [`Implement ${title}`, `Keep focus on ${noun}`];
     return {
       id: i + 1,
+      dependsOn: t.dependsOn,
       title,
       description: t.description || `Complete ${title}.`,
       whatThisMeans:

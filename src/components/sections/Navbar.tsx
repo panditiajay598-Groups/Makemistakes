@@ -1,10 +1,13 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
+import { usePathname } from "next/navigation";
+import Link from "next/link";
 import { Terminal, Menu, X } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 
 export default function Navbar() {
+  const pathname = usePathname();
   const [scrolled, setScrolled] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
@@ -22,6 +25,8 @@ export default function Navbar() {
     { name: "Missions", href: "#missions" },
     { name: "Pricing", href: "/pricing" },
   ];
+  const getNavHref = (href: string) =>
+    href.startsWith("#") && pathname !== "/" ? `/${href}` : href;
 
   return (
     <header
@@ -34,14 +39,14 @@ export default function Navbar() {
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex items-center justify-between">
           {/* Logo Mark + Text */}
-          <a href="/" className="flex items-center gap-2.5 group">
+          <Link href="/" className="flex items-center gap-2.5 group">
             <div className="w-8 h-8 rounded-lg bg-teal-700 flex items-center justify-center text-white shadow-sm">
               <Terminal className="w-4 h-4 text-white" />
             </div>
             <span className="font-bold text-xl text-zinc-900 font-sans tracking-tight">
               Make<span className="text-teal-700">Mistakes</span>
             </span>
-          </a>
+          </Link>
 
           {/* Right Navigation Links & Action Buttons */}
           <div className="hidden md:flex items-center gap-7">
@@ -49,7 +54,7 @@ export default function Navbar() {
               {navLinks.map((link) => (
                 <a
                   key={link.name}
-                  href={link.href}
+                  href={getNavHref(link.href)}
                   className="hover:text-zinc-900 transition-colors"
                 >
                   {link.name}
@@ -92,7 +97,7 @@ export default function Navbar() {
             {navLinks.map((link) => (
               <a
                 key={link.name}
-                href={link.href}
+                href={getNavHref(link.href)}
                 onClick={() => setMobileMenuOpen(false)}
                 className="px-3 py-2 text-base font-medium text-zinc-700 hover:text-zinc-900"
               >

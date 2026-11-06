@@ -2,10 +2,17 @@ import crypto from "crypto";
 import { prisma } from "@backend/lib/prisma";
 import { getPlanConfig, PlanTier, PLANS } from "./plans";
 import { SessionPayload } from "./authSession";
+import {
+  activateCapturedPayment,
+  constantTimeHexMatch,
+  isWebhookSignatureValid,
+  sandboxPaymentsEnabled,
+  activatePaymentOnce,
+} from "./security/paymentSecurity";
 
 const RAZORPAY_KEY_ID = process.env.RAZORPAY_KEY_ID || "";
 const RAZORPAY_KEY_SECRET = process.env.RAZORPAY_KEY_SECRET || "";
-const RAZORPAY_WEBHOOK_SECRET = process.env.RAZORPAY_WEBHOOK_SECRET || process.env.JWT_ACCESS_SECRET || "razorpay_webhook_secret_2026";
+const RAZORPAY_WEBHOOK_SECRET = process.env.RAZORPAY_WEBHOOK_SECRET || "";
 
 export interface CreateOrderParams {
   session: SessionPayload;
@@ -32,7 +39,13 @@ export class PaymentService {
    * Generates a deterministic sandbox signature for automated testing / sandbox mode
    */
   public static generateSandboxSignature(orderId: string, paymentId: string): string {
-    const secret = RAZORPAY_KEY_SECRET || process.env.JWT_ACCESS_SECRET || "sandbox_secret_key";
+    if (!sandboxPaymentsEnabled(process.env)) {
+      throw new Error("SANDBOX_DISABLED: Sandbox payments are unavailable.");
+    }
+    const secret = process.env.PAYMENT_SANDBOX_SECRET;
+    if (!secret || Buffer.byteLength(secret, "utf8") < 32) {
+      throw new Error("PAYMENT_UNAVAILABLE: A dedicated sandbox secret is required.");
+    }
     return crypto
       .createHmac("sha256", secret)
       .update(`${orderId}|${paymentId}`)
@@ -45,7 +58,7 @@ export class PaymentService {
    * Resolves verified email from server record.
    * Determines authoritative price and currency on the server.
    */
-  public static async createOrder({ session, planId, billingName }: CreateOrderParams) {
+  public static async createOrder({ session, planId }: CreateOrderParams) {
     if (!session || !session.userId) {
       throw new Error("UNAUTHORIZED: Valid session required to create payment order.");
     }
@@ -59,15 +72,6 @@ export class PaymentService {
       throw new Error("ACCOUNT_NOT_FOUND: Authenticated user record does not exist.");
     }
 
-    if (billingName && (!user.name || user.name !== billingName)) {
-      try {
-        await prisma.user.update({
-          where: { id: user.id },
-          data: { name: billingName },
-        });
-      } catch {}
-    }
-
     // Validate selected plan against server-controlled config
     const planConfig = getPlanConfig(planId);
     if (!planConfig || planConfig.id === "FREE") {
@@ -78,43 +82,48 @@ export class PaymentService {
     const amount = planConfig.amountInPaise;
     const currency = planConfig.currency;
     const orderId = `ord_mm_${Date.now()}_${crypto.randomBytes(4).toString("hex")}`;
-    const isRazorpayConfigured = Boolean(RAZORPAY_KEY_ID && RAZORPAY_KEY_SECRET && !RAZORPAY_KEY_ID.includes("your-"));
+    const isRazorpayConfigured = Boolean(
+      RAZORPAY_KEY_ID && RAZORPAY_KEY_SECRET && !RAZORPAY_KEY_ID.includes("your-")
+    );
+    const useSandbox = !isRazorpayConfigured && sandboxPaymentsEnabled(process.env);
+    if (!isRazorpayConfigured && !useSandbox) {
+      throw new Error("PAYMENT_UNAVAILABLE: Razorpay is not configured.");
+    }
 
     let gatewayOrderId = orderId;
-    let gatewayType = isRazorpayConfigured ? "RAZORPAY" : "SANDBOX";
+    const gatewayType = useSandbox ? "SANDBOX" : "RAZORPAY";
 
     if (isRazorpayConfigured) {
-      try {
-        const authHeader = Buffer.from(`${RAZORPAY_KEY_ID}:${RAZORPAY_KEY_SECRET}`).toString("base64");
-        const rzpRes = await fetch("https://api.razorpay.com/v1/orders", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Basic ${authHeader}`,
+      const authHeader = Buffer.from(`${RAZORPAY_KEY_ID}:${RAZORPAY_KEY_SECRET}`).toString("base64");
+      const rzpRes = await fetch("https://api.razorpay.com/v1/orders", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Basic ${authHeader}`,
+        },
+        body: JSON.stringify({
+          amount,
+          currency,
+          receipt: orderId,
+          notes: {
+            internalUserId: user.id,
+            internalUserEmail: user.email,
+            plan: planConfig.id,
           },
-          body: JSON.stringify({
-            amount,
-            currency,
-            receipt: orderId,
-            notes: {
-              internalUserId: user.id,
-              internalUserEmail: user.email,
-              plan: planConfig.id,
-            },
-          }),
-        });
+        }),
+      });
 
-        if (rzpRes.ok) {
-          const rzpData = await rzpRes.json();
-          gatewayOrderId = rzpData.id;
-        } else {
-          console.warn("[Razorpay] API call failed, falling back to secure sandbox gateway order.");
-          gatewayType = "SANDBOX";
-        }
-      } catch (err: any) {
-        console.warn("[Razorpay] Order creation exception, using sandbox:", err?.message);
-        gatewayType = "SANDBOX";
+      const rzpData = rzpRes.ok ? await rzpRes.json() : null;
+      if (
+        !rzpRes.ok ||
+        typeof rzpData?.id !== "string" ||
+        rzpData.amount !== amount ||
+        rzpData.currency !== currency
+      ) {
+        console.error("[Razorpay] Order creation failed:", rzpRes.status);
+        throw new Error("PAYMENT_UNAVAILABLE: Unable to create a Razorpay order.");
       }
+      gatewayOrderId = rzpData.id;
     }
 
     // Persist PaymentOrder in Database bound to user.id and user.email
@@ -132,7 +141,7 @@ export class PaymentService {
       },
     });
 
-    const sandboxPaymentId = gatewayType === "SANDBOX" ? `pay_sandbox_${Date.now()}` : undefined;
+    const sandboxPaymentId = gatewayType === "SANDBOX" ? `pay_sandbox_${crypto.randomBytes(16).toString("hex")}` : undefined;
     const sandboxSignature = gatewayType === "SANDBOX" && sandboxPaymentId
       ? this.generateSandboxSignature(gatewayOrderId, sandboxPaymentId)
       : undefined;
@@ -147,9 +156,8 @@ export class PaymentService {
       userEmail: user.email,
       userName: user.name || user.email.split("@")[0],
       gateway: gatewayType,
-      keyId: isRazorpayConfigured ? RAZORPAY_KEY_ID : "sandbox_key_makemistakes",
-      sandboxPaymentId,
-      sandboxSignature,
+      keyId: isRazorpayConfigured ? RAZORPAY_KEY_ID : undefined,
+      ...(gatewayType === "SANDBOX" ? { sandboxPaymentId, sandboxSignature } : {}),
     };
   }
 
@@ -162,7 +170,6 @@ export class PaymentService {
     orderId,
     gatewayPaymentId,
     gatewaySignature,
-    idempotencyKey,
   }: VerifyPaymentParams) {
     if (!session || !session.userId) {
       throw new Error("UNAUTHORIZED: Session required for payment verification.");
@@ -211,160 +218,152 @@ export class PaymentService {
       throw new Error(`INVALID_STATUS: Order cannot be verified in '${order.status}' status.`);
     }
 
-    // SIGNATURE VERIFICATION
-    let isSigValid = false;
-    const signPayload = `${order.gatewayOrderId || order.orderId}|${gatewayPaymentId}`;
-
-    if (order.gateway === "RAZORPAY" && RAZORPAY_KEY_SECRET) {
-      const expectedSignature = crypto
-        .createHmac("sha256", RAZORPAY_KEY_SECRET)
-        .update(signPayload)
-        .digest("hex");
-      try {
-        isSigValid = crypto.timingSafeEqual(
-          Buffer.from(gatewaySignature),
-          Buffer.from(expectedSignature)
-        );
-      } catch {
-        isSigValid = false;
-      }
-    } else {
-      // Sandbox HMAC verification
-      const expectedSandboxSig = this.generateSandboxSignature(
-        order.gatewayOrderId || order.orderId,
-        gatewayPaymentId
-      );
-      const isAutoSandbox =
-        order.gateway === "SANDBOX" &&
-        (gatewaySignature === "sandbox_sig_auto_generate" ||
-          gatewaySignature === "sandbox_sig" ||
-          gatewaySignature === "sandbox_signature_verified" ||
-          gatewaySignature === "sandbox_signature");
-
-      try {
-        isSigValid =
-          isAutoSandbox ||
-          (gatewaySignature.length === expectedSandboxSig.length &&
-            crypto.timingSafeEqual(
-              Buffer.from(gatewaySignature),
-              Buffer.from(expectedSandboxSig)
-            ));
-      } catch {
-        isSigValid = Boolean(isAutoSandbox);
-      }
-    }
-
-    if (!isSigValid) {
-      await prisma.paymentOrder.update({
-        where: { id: order.id },
-        data: { status: "FAILED" },
-      });
-      throw new Error("INVALID_SIGNATURE: Payment signature verification failed.");
-    }
-
-    // IDEMPOTENT ATOMIC ACTIVATION
     const planConfig = getPlanConfig(order.plan);
     if (!planConfig) {
       throw new Error("INVALID_PLAN: Plan configuration not found.");
     }
-
-    const now = new Date();
-    const expiryDate = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000); // 30 days
-    const creditsToGrant = planConfig.aiCreditsPerMonth;
-
-    // 1. Atomically mark order as PAID only if it is still CREATED
-    const updateResult = await prisma.paymentOrder.updateMany({
-      where: {
-        id: order.id,
-        status: "CREATED",
-      },
-      data: {
-        status: "PAID",
-        gatewayPaymentId,
-        gatewaySignature,
-        idempotencyKey: idempotencyKey || gatewayPaymentId,
-        activatedAt: now,
-      },
-    });
-
-    if (updateResult.count === 0) {
-      // Another concurrent worker/request already won the race!
-      const existingSub = await prisma.subscription.findUnique({
-        where: { userId: session.userId },
-      });
-      const credits = await prisma.aiCreditBalance.findUnique({
-        where: { userId: session.userId },
-      });
-
-      return {
-        success: true,
-        alreadyProcessed: true,
-        plan: order.plan,
-        status: "ACTIVE",
-        subscription: existingSub,
-        credits: credits?.remainingCredits || 0,
-        message: "Payment was concurrently processed and entitlement is active.",
-      };
+    if (order.amount !== planConfig.amountInPaise || order.currency !== planConfig.currency) {
+      throw new Error("INVALID_PAYMENT: Stored order amount or currency does not match the plan.");
     }
 
-    // 2. Activate or renew Subscription for this internal userId
-    const updatedSub = await prisma.subscription.upsert({
-      where: { userId: session.userId },
-      create: {
-        userId: session.userId,
-        plan: order.plan,
-        status: "ACTIVE",
-        startDate: now,
-        expiryDate,
-        orderId: order.orderId,
-        gatewayPaymentId,
-      },
-      update: {
-        plan: order.plan,
-        status: "ACTIVE",
-        startDate: now,
-        expiryDate,
-        orderId: order.orderId,
-        gatewayPaymentId,
-      },
-    });
+    if (order.gateway === "SANDBOX") {
+      if (!sandboxPaymentsEnabled(process.env)) {
+        throw new Error("SANDBOX_DISABLED: Sandbox payment orders cannot be verified in this environment.");
+      }
+      const expected = this.generateSandboxSignature(order.gatewayOrderId || "", gatewayPaymentId);
+      if (!constantTimeHexMatch(gatewaySignature, expected)) {
+        throw new Error("INVALID_SIGNATURE: Payment signature verification failed.");
+      }
+      return this.activateVerifiedOrder(order, gatewayPaymentId, gatewaySignature);
+    }
 
-    // 3. Grant AI credits and log transaction
-    const balance = await prisma.aiCreditBalance.upsert({
-      where: { userId: session.userId },
-      create: {
-        userId: session.userId,
-        totalCredits: creditsToGrant,
-        usedCredits: 0,
-        remainingCredits: creditsToGrant,
-      },
-      update: {
-        totalCredits: { increment: creditsToGrant },
-        remainingCredits: { increment: creditsToGrant },
-      },
-    });
+    if (order.gateway !== "RAZORPAY" || !order.gatewayOrderId || !RAZORPAY_KEY_ID || !RAZORPAY_KEY_SECRET) {
+      throw new Error("PAYMENT_UNAVAILABLE: A valid Razorpay order is required.");
+    }
 
-    await prisma.aiCreditTransaction.create({
-      data: {
-        userId: session.userId,
-        amount: creditsToGrant,
-        type: "PURCHASE_GRANT",
-        referenceId: order.orderId,
-        balanceAfter: balance.remainingCredits,
-      },
-    });
+    const expectedSignature = crypto
+      .createHmac("sha256", RAZORPAY_KEY_SECRET)
+      .update(`${order.gatewayOrderId}|${gatewayPaymentId}`)
+      .digest("hex");
+    if (!constantTimeHexMatch(gatewaySignature, expectedSignature)) {
+      throw new Error("INVALID_SIGNATURE: Payment signature verification failed.");
+    }
 
-    return {
-      success: true,
-      activated: true,
-      plan: order.plan,
-      planName: planConfig.name,
-      status: "ACTIVE",
-      expiryDate,
-      creditsGranted: creditsToGrant,
-      totalRemainingCredits: balance.remainingCredits,
-      subscription: updatedSub,
-    };
+    const paymentResponse = await fetch(
+      `https://api.razorpay.com/v1/payments/${encodeURIComponent(gatewayPaymentId)}`,
+      {
+        headers: {
+          Authorization: `Basic ${Buffer.from(`${RAZORPAY_KEY_ID}:${RAZORPAY_KEY_SECRET}`).toString("base64")}`,
+        },
+      }
+    );
+    if (!paymentResponse.ok) {
+      throw new Error("PAYMENT_UNVERIFIED: Razorpay could not confirm the payment.");
+    }
+    const payment = await paymentResponse.json();
+    return activateCapturedPayment(order, payment, gatewayPaymentId, () =>
+      this.activateVerifiedOrder(order, gatewayPaymentId, gatewaySignature)
+    );
+  }
+
+  private static async activateVerifiedOrder(
+    order: { id: string; userId: string; orderId: string; plan: string },
+    gatewayPaymentId: string,
+    gatewaySignature?: string
+  ) {
+    const planConfig = getPlanConfig(order.plan);
+    if (!planConfig || planConfig.id === "FREE") {
+      throw new Error("INVALID_PLAN: Plan configuration not found.");
+    }
+    const now = new Date();
+    const expiryDate = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
+    const creditsToGrant = planConfig.aiCreditsPerMonth;
+
+    return prisma.$transaction(async (transaction) =>
+      activatePaymentOnce(
+        async () => {
+          const update = await transaction.paymentOrder.updateMany({
+            where: { id: order.id, status: "CREATED" },
+            data: {
+              status: "PAID",
+              gatewayPaymentId,
+              gatewaySignature,
+              idempotencyKey: gatewayPaymentId,
+              activatedAt: now,
+            },
+          });
+          return update.count === 1;
+        },
+        async () => {
+          const subscription = await transaction.subscription.upsert({
+            where: { userId: order.userId },
+            create: {
+              userId: order.userId,
+              plan: order.plan,
+              status: "ACTIVE",
+              startDate: now,
+              expiryDate,
+              orderId: order.orderId,
+              gatewayPaymentId,
+            },
+            update: {
+              plan: order.plan,
+              status: "ACTIVE",
+              startDate: now,
+              expiryDate,
+              orderId: order.orderId,
+              gatewayPaymentId,
+            },
+          });
+          const balance = await transaction.aiCreditBalance.upsert({
+            where: { userId: order.userId },
+            create: {
+              userId: order.userId,
+              totalCredits: creditsToGrant,
+              usedCredits: 0,
+              remainingCredits: creditsToGrant,
+            },
+            update: {
+              totalCredits: { increment: creditsToGrant },
+              remainingCredits: { increment: creditsToGrant },
+            },
+          });
+          await transaction.aiCreditTransaction.create({
+            data: {
+              userId: order.userId,
+              amount: creditsToGrant,
+              type: "PURCHASE_GRANT",
+              referenceId: order.orderId,
+              balanceAfter: balance.remainingCredits,
+            },
+          });
+          return {
+            success: true,
+            activated: true,
+            alreadyProcessed: false,
+            plan: order.plan,
+            planName: planConfig.name,
+            status: "ACTIVE",
+            expiryDate,
+            creditsGranted: creditsToGrant,
+            totalRemainingCredits: balance.remainingCredits,
+            subscription,
+          };
+        },
+        async () => {
+        const existing = await transaction.paymentOrder.findUnique({ where: { id: order.id } });
+        if (existing?.status === "PAID" && existing.gatewayPaymentId === gatewayPaymentId) {
+          return {
+            success: true,
+            alreadyProcessed: true,
+            plan: order.plan,
+            status: "ACTIVE",
+          };
+        }
+        throw new Error("PAYMENT_ALREADY_PROCESSED: Order is no longer payable.");
+        }
+      )
+    );
   }
 
   /**
@@ -374,19 +373,11 @@ export class PaymentService {
     if (!rawBody || !signature) {
       throw new Error("Missing rawBody or signature for webhook");
     }
+    if (!RAZORPAY_WEBHOOK_SECRET) {
+      throw new Error("PAYMENT_UNAVAILABLE: Razorpay webhook secret is not configured.");
+    }
 
-    // Verify webhook signature
-    const expectedSig = crypto
-      .createHmac("sha256", RAZORPAY_WEBHOOK_SECRET)
-      .update(rawBody)
-      .digest("hex");
-
-    const isMatch = crypto.timingSafeEqual(
-      Buffer.from(signature),
-      Buffer.from(expectedSig)
-    );
-
-    if (!isMatch) {
+    if (!isWebhookSignatureValid(rawBody, signature, RAZORPAY_WEBHOOK_SECRET)) {
       throw new Error("INVALID_WEBHOOK_SIGNATURE");
     }
 
@@ -395,128 +386,86 @@ export class PaymentService {
 
     if (eventType === "order.paid" || eventType === "payment.captured") {
       const paymentEntity = event.payload?.payment?.entity;
-      const gatewayOrderId = paymentEntity?.order_id;
-      const gatewayPaymentId = paymentEntity?.id;
-
-      if (!gatewayOrderId || !gatewayPaymentId) {
-        return { success: true, message: "Ignored: missing payment details" };
+      if (
+        !paymentEntity ||
+        typeof paymentEntity.id !== "string" ||
+        typeof paymentEntity.order_id !== "string"
+      ) {
+        throw new Error("INVALID_WEBHOOK: Captured payment details are missing.");
       }
 
       const order = await prisma.paymentOrder.findFirst({
         where: {
-          OR: [{ gatewayOrderId }, { orderId: gatewayOrderId }],
+          gatewayOrderId: paymentEntity.order_id,
         },
       });
 
       if (!order) {
         return { success: true, message: "Order not found in database" };
       }
-
-      if (order.status === "PAID") {
-        return { success: true, message: "Order already fulfilled (idempotent)" };
+      if (order.gateway !== "RAZORPAY") {
+        throw new Error("INVALID_WEBHOOK: Captured payment does not match the stored order.");
       }
 
-      // Perform activation
-      const planConfig = getPlanConfig(order.plan);
-      const creditsToGrant = planConfig?.aiCreditsPerMonth || 1000;
-      const now = new Date();
-      const expiryDate = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
-
-      const updateResult = await prisma.paymentOrder.updateMany({
-        where: {
-          id: order.id,
-          status: "CREATED",
-        },
-        data: {
-          status: "PAID",
-          gatewayPaymentId,
-          activatedAt: now,
-        },
-      });
-
-      if (updateResult.count === 0) {
-        return { success: true, message: "Order already fulfilled (idempotent)" };
-      }
-
-      await prisma.subscription.upsert({
-        where: { userId: order.userId },
-        create: {
-          userId: order.userId,
-          plan: order.plan,
-          status: "ACTIVE",
-          startDate: now,
-          expiryDate,
-          orderId: order.orderId,
-          gatewayPaymentId,
-        },
-        update: {
-          plan: order.plan,
-          status: "ACTIVE",
-          startDate: now,
-          expiryDate,
-          orderId: order.orderId,
-          gatewayPaymentId,
-        },
-      });
-
-      const balance = await prisma.aiCreditBalance.upsert({
-        where: { userId: order.userId },
-        create: {
-          userId: order.userId,
-          totalCredits: creditsToGrant,
-          usedCredits: 0,
-          remainingCredits: creditsToGrant,
-        },
-        update: {
-          totalCredits: { increment: creditsToGrant },
-          remainingCredits: { increment: creditsToGrant },
-        },
-      });
-
-      await prisma.aiCreditTransaction.create({
-        data: {
-          userId: order.userId,
-          amount: creditsToGrant,
-          type: "PURCHASE_GRANT",
-          referenceId: order.orderId,
-          balanceAfter: balance.remainingCredits,
-        },
-      });
-
-      return { success: true, message: "Payment captured and plan activated via webhook" };
+      return activateCapturedPayment(order, paymentEntity, paymentEntity.id, () =>
+        this.activateVerifiedOrder(order, paymentEntity.id, signature)
+      );
     }
 
     if (eventType === "refund.processed") {
+      const refundEntity = event.payload?.refund?.entity;
       const paymentEntity = event.payload?.payment?.entity;
-      const gatewayPaymentId = paymentEntity?.id;
+      const gatewayPaymentId = refundEntity?.payment_id || paymentEntity?.id;
 
       if (gatewayPaymentId) {
         const order = await prisma.paymentOrder.findUnique({
           where: { gatewayPaymentId },
         });
 
-        if (order && order.status !== "REFUNDED") {
-          await prisma.paymentOrder.update({
-            where: { id: order.id },
-            data: { status: "REFUNDED" },
-          });
-
-          await prisma.subscription.update({
-            where: { userId: order.userId },
-            data: {
-              plan: "FREE",
-              status: "REFUNDED",
-            },
-          });
-
-          await prisma.aiCreditTransaction.create({
-            data: {
-              userId: order.userId,
-              amount: 0,
-              type: "REFUND_DEDUCT",
-              referenceId: order.orderId,
-              balanceAfter: 0,
-            },
+        if (order && order.gateway === "RAZORPAY" && order.status === "PAID") {
+          await prisma.$transaction(async (transaction) => {
+            const updated = await transaction.paymentOrder.updateMany({
+              where: { id: order.id, status: "PAID", gatewayPaymentId },
+              data: { status: "REFUNDED" },
+            });
+            if (updated.count !== 1) return;
+            await transaction.subscription.updateMany({
+              where: { userId: order.userId, orderId: order.orderId },
+              data: { plan: "FREE", status: "REFUNDED" },
+            });
+            const [purchaseGrant, balance] = await Promise.all([
+              transaction.aiCreditTransaction.findFirst({
+                where: { userId: order.userId, referenceId: order.orderId, type: "PURCHASE_GRANT" },
+              }),
+              transaction.aiCreditBalance.findUnique({ where: { userId: order.userId } }),
+            ]);
+            const creditsToRevoke = Math.min(
+              purchaseGrant?.amount || 0,
+              balance?.remainingCredits || 0
+            );
+            let balanceAfter = balance?.remainingCredits || 0;
+            if (creditsToRevoke > 0) {
+              const balanceUpdate = await transaction.aiCreditBalance.updateMany({
+                where: {
+                  userId: order.userId,
+                  remainingCredits: { gte: creditsToRevoke },
+                },
+                data: { remainingCredits: { decrement: creditsToRevoke } },
+              });
+              if (balanceUpdate.count !== 1) {
+                throw new Error("REFUND_RETRY: Credit balance changed during refund processing.");
+              }
+              balanceAfter -= creditsToRevoke;
+            }
+            await transaction.aiCreditTransaction.create({
+              data: {
+                userId: order.userId,
+                amount: -creditsToRevoke,
+                type: "REFUND_DEDUCT",
+                referenceId: order.orderId,
+                balanceAfter,
+              },
+            });
           });
         }
       }

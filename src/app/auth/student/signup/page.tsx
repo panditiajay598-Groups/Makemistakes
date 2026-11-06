@@ -18,6 +18,7 @@ export default function StudentSignup() {
     password: "",
     confirmPassword: "",
     agreed: false,
+    marketingOptIn: false,
   });
 
   const [touched, setTouched] = useState<Record<string, boolean>>({});
@@ -79,7 +80,7 @@ export default function StudentSignup() {
     };
 
     if (!formData.agreed) {
-      newErrors.agreed = "You must agree to the Terms of Service & Code of Honor";
+      newErrors.agreed = "You must accept the Terms & Conditions and Privacy Policy to create an account.";
     }
 
     setErrors(newErrors);
@@ -110,6 +111,10 @@ export default function StudentSignup() {
         localStorage.setItem("user_email", formData.email);
         localStorage.setItem("user_role", "student");
         localStorage.setItem("redirect_to", "/dashboard");
+        localStorage.setItem("terms_accepted", "true");
+        localStorage.setItem("terms_version", "1.0");
+        localStorage.setItem("privacy_policy_version", "1.0");
+        localStorage.setItem("marketing_consent", String(formData.marketingOptIn));
       }
     }, 1400);
   };
@@ -275,11 +280,23 @@ export default function StudentSignup() {
                 className="mt-0.5 rounded border-zinc-300 text-teal-700 focus:ring-teal-600 h-3.5 w-3.5 shrink-0"
               />
               <span>
-                I agree to the <span className="text-zinc-900 underline font-medium">Terms of Service</span> and{" "}
-                <span className="text-zinc-900 underline font-medium">Code of Honor</span>.
+                I agree to the <Link href="/terms-and-conditions" className="text-zinc-900 underline font-medium">Terms & Conditions</Link> and{" "}
+                <Link href="/privacy-policy" className="text-zinc-900 underline font-medium">Privacy Policy</Link>.
               </span>
             </label>
             {touched.agreed && errors.agreed && <p className="text-[11px] text-rose-600 font-medium">{errors.agreed}</p>}
+          </div>
+
+          <div className="space-y-1">
+            <label className="flex items-start gap-2 text-xs text-zinc-600 font-sans cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={formData.marketingOptIn}
+                onChange={(e) => handleChange("marketingOptIn", e.target.checked)}
+                className="mt-0.5 rounded border-zinc-300 text-teal-700 focus:ring-teal-600 h-3.5 w-3.5 shrink-0"
+              />
+              <span>Send me product updates and educational emails (optional).</span>
+            </label>
           </div>
 
           {/* Full-Pill Submit Button */}

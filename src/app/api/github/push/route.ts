@@ -2,6 +2,13 @@ import { NextResponse } from "next/server";
 import { getDb } from "@/lib/mongodb";
 import fs from "fs";
 import path from "path";
+import { workspaceDir } from "@/lib/buildos/paths";
+import { getAuthenticatedIdentity } from "@/lib/security/sessionIdentity";
+import { requireOwnedWorkspace } from "@/lib/security/workspaceOwnership";
+import {
+  decryptGithubAccessToken,
+  encryptGithubAccessToken,
+} from "@/lib/security/githubOAuth";
 
 export const runtime = "nodejs";
 
@@ -15,27 +22,55 @@ function sanitizeCode(code: string): string {
 
 export async function POST(req: Request) {
   try {
-    const { userId, problemId, repoName, isPrivate = false } = await req.json();
-
-    if (!userId || !problemId) {
-      return NextResponse.json({ error: "userId and problemId are required" }, { status: 400 });
+    const identity = await getAuthenticatedIdentity(req);
+    if (!identity) {
+      return NextResponse.json({ error: "Authentication required" }, { status: 401 });
     }
 
-    const db = await getDb();
-    const effectiveUserId = userId.toString().trim().toLowerCase();
-    const journey = await db.collection("user_journeys").findOne({ userId: effectiveUserId, problemId });
+    const body = await req.json();
+    const { problemId, repoName, isPrivate = false } = body;
 
-    const token = journey?.phases?.deploy?.githubAccessToken;
+    if (typeof problemId !== "string" || !problemId.trim()) {
+      return NextResponse.json({ error: "problemId is required" }, { status: 400 });
+    }
+    if (repoName !== undefined && typeof repoName !== "string") {
+      return NextResponse.json({ error: "repoName must be a string" }, { status: 400 });
+    }
+    if (typeof isPrivate !== "boolean") {
+      return NextResponse.json({ error: "isPrivate must be a boolean" }, { status: 400 });
+    }
+    const cleanProblemId = problemId.trim();
+    const ownedWorkspace = await requireOwnedWorkspace(identity, cleanProblemId);
+
+    const db = await getDb();
+    const journey = await db.collection("user_journeys").findOne({
+      userId: ownedWorkspace.userId,
+      problemId: cleanProblemId,
+    });
+    if (!journey) {
+      return NextResponse.json({ error: "Assignment not found" }, { status: 404 });
+    }
+
+    const storedToken = journey.phases?.deploy?.githubAccessToken;
     const username = journey?.phases?.deploy?.githubUsername;
 
-    if (!token || !username) {
+    if (typeof storedToken !== "string" || !storedToken || !username) {
       return NextResponse.json(
         { error: "GitHub account not connected. Please connect your GitHub account first." },
         { status: 400 }
       );
     }
 
-    const cleanRepoName = (repoName || `makemistakes-${problemId.toLowerCase()}`).replace(/[^a-zA-Z0-9._-]/g, "-");
+    const credential = decryptGithubAccessToken(storedToken);
+    const token = credential.token;
+    if (!credential.wasEncrypted) {
+      await db.collection("user_journeys").updateOne(
+        { _id: journey._id, userId: ownedWorkspace.userId, problemId: cleanProblemId },
+        { $set: { "phases.deploy.githubAccessToken": encryptGithubAccessToken(token) } }
+      );
+    }
+
+    const cleanRepoName = (repoName || `makemistakes-${cleanProblemId.toLowerCase()}`).replace(/[^a-zA-Z0-9._-]/g, "-");
 
     // 1. Create Remote GitHub Repository
     const createRepoRes = await fetch("https://api.github.com/user/repos", {
@@ -48,13 +83,13 @@ export async function POST(req: Request) {
       },
       body: JSON.stringify({
         name: cleanRepoName,
-        description: `Solution for ${problemId} created on MakeMistakes platform.`,
+        description: `Solution for ${cleanProblemId} created on MakeMistakes platform.`,
         private: isPrivate,
         auto_init: true,
       }),
     });
 
-    let repoData = await createRepoRes.json();
+    const repoData = await createRepoRes.json();
     if (!createRepoRes.ok && createRepoRes.status !== 422) {
       return NextResponse.json({ error: repoData.message || "Failed to create GitHub repository" }, { status: createRepoRes.status });
     }
@@ -62,10 +97,10 @@ export async function POST(req: Request) {
     const repoUrl = `https://github.com/${username}/${cleanRepoName}`;
 
     // 2. Fetch BuildOS Workspace Files
-    const workspaceDir = path.join(process.cwd(), "data", "student-workspaces", effectiveUserId, problemId);
-    let filesToPush: { path: string; content: string }[] = [];
+    const workspaceRoot = workspaceDir(ownedWorkspace.userId, cleanProblemId);
+    const filesToPush: { path: string; content: string }[] = [];
 
-    if (fs.existsSync(workspaceDir)) {
+    if (fs.existsSync(workspaceRoot)) {
       function scanDir(dir: string, base: string = "") {
         try {
           const entries = fs.readdirSync(dir);
@@ -92,14 +127,14 @@ export async function POST(req: Request) {
           console.warn(`[ScanDir Skip Dir] Could not read directory ${dir}:`, dirErr);
         }
       }
-      scanDir(workspaceDir);
+      scanDir(workspaceRoot);
     }
 
     // Default template README if workspace files empty
     if (filesToPush.length === 0) {
       filesToPush.push({
         path: "README.md",
-        content: `# ${problemId} — MakeMistakes Project\n\nCompleted product challenge on MakeMistakes platform.\n\n### Tech Stack\n- Next.js / React\n- TypeScript\n- Tailwind CSS\n`,
+        content: `# ${cleanProblemId} — MakeMistakes Project\n\nCompleted product challenge on MakeMistakes platform.\n\n### Tech Stack\n- Next.js / React\n- TypeScript\n- Tailwind CSS\n`,
       });
     }
 
@@ -133,7 +168,7 @@ export async function POST(req: Request) {
 
     // 4. Update MongoDB Record with Repo URL and status
     await db.collection("user_journeys").updateOne(
-      { userId: effectiveUserId, problemId },
+      { _id: journey._id, userId: ownedWorkspace.userId, problemId: cleanProblemId },
       {
         $set: {
           "phases.deploy.githubRepoUrl": repoUrl,
@@ -151,6 +186,7 @@ export async function POST(req: Request) {
     });
   } catch (err: any) {
     console.error("[GitHub Push Error]:", err);
-    return NextResponse.json({ error: err.message || "Failed to push repository" }, { status: 500 });
+    const status = typeof err?.status === "number" ? err.status : 500;
+    return NextResponse.json({ error: status === 404 ? "Workspace not found" : "Failed to push repository" }, { status });
   }
 }

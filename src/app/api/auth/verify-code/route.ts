@@ -1,12 +1,13 @@
 import { NextResponse } from "next/server";
-import { verifyCode } from "@/lib/codeStore";
+import { OTPService } from "@backend/services/otp.service";
 import { applyNoStoreHeaders } from "@/lib/cacheHeaders";
+import { publicOtpError } from "@/lib/security/otpSecurity";
 
 export async function POST(req: Request) {
   try {
     const { email, code } = await req.json();
 
-    if (!email || !code) {
+    if (typeof email !== "string" || typeof code !== "string" || !email || !code) {
       return applyNoStoreHeaders(
         NextResponse.json(
           { success: false, message: "Email and 6-digit verification code are required." },
@@ -15,12 +16,12 @@ export async function POST(req: Request) {
       );
     }
 
-    const result = verifyCode(email, code);
+    const result = await OTPService.verifyOTP(email, code);
 
-    if (!result.valid) {
+    if (!result.verified) {
       return applyNoStoreHeaders(
         NextResponse.json(
-          { success: false, message: result.reason || "Invalid verification code." },
+          { success: false, message: "Invalid or expired verification code. Please request a new code." },
           { status: 400 }
         )
       );
@@ -49,12 +50,17 @@ export async function POST(req: Request) {
     });
 
     return applyNoStoreHeaders(response);
-  } catch (error: any) {
-    console.error("Error in /api/auth/verify-code:", error);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "";
+    const publicError = publicOtpError(message, "verify");
+    if (publicError.status !== 429) console.error("Error in /api/auth/verify-code:", error);
     return applyNoStoreHeaders(
       NextResponse.json(
-        { success: false, message: "Verification failed. Please try again." },
-        { status: 500 }
+        {
+          success: false,
+          message: publicError.message,
+        },
+        { status: publicError.status }
       )
     );
   }

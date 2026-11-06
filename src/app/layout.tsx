@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Inter, Playfair_Display } from "next/font/google";
+import CookieConsentBanner from "@/components/cookies/CookieConsentBanner";
 import "./globals.css";
 
 const inter = Inter({
@@ -28,6 +29,7 @@ export default function RootLayout({
   return (
     <html lang="en" className={`${inter.variable} ${playfair.variable} h-full antialiased`}>
       <body className="min-h-full flex flex-col bg-[#FAF9F5] text-zinc-900 selection:bg-teal-500/20 selection:text-teal-900">
+        <CookieConsentBanner />
         {children}
       </body>
     </html>

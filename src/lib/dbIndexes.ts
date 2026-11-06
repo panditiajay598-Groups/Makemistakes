@@ -45,6 +45,18 @@ export const JUSTIFIED_INDEXES: IndexDefinition[] = [
     reason: "Exact equality lookup and upsert for isolated BuildOS workspaces per user and problem.",
   },
   {
+    collection: "buildos_activity",
+    spec: { userId: 1, problemId: 1, at: -1 },
+    options: { name: "idx_buildos_activity_user_problem_at", background: true },
+    reason: "Loads recent implementation and execution events for one authenticated student's project.",
+  },
+  {
+    collection: "nova_conversation_messages",
+    spec: { userId: 1, problemId: 1, conversationId: 1, sequence: -1 },
+    options: { name: "idx_nova_messages_project_conversation_created", background: true },
+    reason: "Loads bounded recent Nova messages within the authenticated student's project conversation.",
+  },
+  {
     collection: "problems",
     spec: { createdAt: -1, problemId: 1 },
     options: { name: "idx_createdAt_desc_problemId_asc", background: true },

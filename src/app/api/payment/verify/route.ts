@@ -42,23 +42,32 @@ export async function POST(req: Request) {
     });
 
     return NextResponse.json(result);
-  } catch (err: any) {
-    console.error("[Verify Payment Error]:", err);
-    const status =
-      err.message?.includes("UNAUTHORIZED")
+  } catch (err: unknown) {
+    const code = err instanceof Error ? err.message : "";
+    console.error("[Verify Payment Error]:", code.split(":")[0] || "UNKNOWN");
+    const status = code.includes("UNAUTHORIZED")
         ? 401
-        : err.message?.includes("FORBIDDEN")
+        : code.includes("FORBIDDEN")
         ? 403
-        : err.message?.includes("INVALID_SIGNATURE") || err.message?.includes("BAD_REQUEST")
+        : code.includes("INVALID_SIGNATURE") ||
+          code.includes("INVALID_PAYMENT") ||
+          code.includes("SANDBOX_DISABLED") ||
+          code.includes("BAD_REQUEST")
         ? 400
-        : err.message?.includes("ORDER_NOT_FOUND")
+        : code.includes("ORDER_NOT_FOUND")
         ? 404
+        : code.includes("PAYMENT_UNAVAILABLE")
+        ? 503
+        : code.includes("PAYMENT_UNVERIFIED")
+        ? 402
         : 500;
 
     return NextResponse.json(
       {
         success: false,
-        error: err.message || "Payment verification failed.",
+        error: code.includes("PAYMENT_UNVERIFIED")
+          ? "Payment has not been confirmed as captured."
+          : "Payment verification failed.",
       },
       { status }
     );

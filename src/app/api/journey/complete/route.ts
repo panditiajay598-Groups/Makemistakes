@@ -6,12 +6,24 @@ import {
   normalizeProblemId,
 } from "@/lib/problemId";
 import { applyNoStoreHeaders } from "@/lib/cacheHeaders";
+import { getAuthenticatedIdentity } from "@/lib/security/sessionIdentity";
 
 export async function POST(req: Request) {
   try {
+    const identity = await getAuthenticatedIdentity(req);
+    if (!identity) {
+      return applyNoStoreHeaders(
+        NextResponse.json({ error: "Authentication required" }, { status: 401 })
+      );
+    }
+
     const body = await req.json().catch(() => ({}));
     const rawInputId = body.problemId || "P000001";
-    const userId = (body.userId || "default_user").toString().trim().toLowerCase();
+    if (typeof rawInputId !== "string" || !rawInputId.trim()) {
+      return applyNoStoreHeaders(
+        NextResponse.json({ error: "problemId is required" }, { status: 400 })
+      );
+    }
     const currentId = normalizeProblemId(rawInputId);
 
     if (!process.env.DATABASE_URL) {
@@ -23,6 +35,18 @@ export async function POST(req: Request) {
     const db = await getDb();
     const problemsCollection = db.collection("problems");
     const completionsCollection = db.collection("problem_completions");
+    const userJourneysCollection = db.collection("user_journeys");
+    const journey = await userJourneysCollection.findOne({
+      userId: { $in: identity.userIds },
+      problemId: { $in: [...new Set([currentId, rawInputId])] },
+    });
+
+    if (!journey) {
+      return applyNoStoreHeaders(
+        NextResponse.json({ error: "Assignment not found" }, { status: 404 })
+      );
+    }
+    const userId = journey.userId;
 
 
     // Mark current problem completed for THIS user only

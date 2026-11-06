@@ -1,5 +1,6 @@
 import { Request, Response } from "express";
 import { OTPService } from "../services/otp.service";
+import { otpSuccessPayload, publicOtpError } from "../../src/lib/security/otpSecurity";
 
 export class AuthController {
   /**
@@ -16,17 +17,16 @@ export class AuthController {
 
       const result = await OTPService.sendOTP(email);
 
-      res.status(200).json({
-        success: true,
-        message: result.message,
-        ...(result.previewUrl ? { previewUrl: result.previewUrl } : {}),
-        ...(result.devOtp ? { devOtp: result.devOtp } : {}),
-      });
-    } catch (error: any) {
-      const statusCode = error.message.includes("Rate limit") || error.message.includes("wait") ? 429 : 400;
-      res.status(statusCode).json({
+      res.status(200).json(otpSuccessPayload(result, process.env, "development"));
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "";
+      const publicError = publicOtpError(message, "send");
+      if (!message.startsWith("OTP_RATE_LIMIT:") && !message.startsWith("EMAIL_DELIVERY_FAILED:")) {
+        console.error("Failed to send OTP:", error);
+      }
+      res.status(publicError.status).json({
         success: false,
-        message: error.message || "Failed to send OTP.",
+        message: publicError.message,
       });
     }
   }
@@ -45,17 +45,16 @@ export class AuthController {
 
       const result = await OTPService.resendOTP(email);
 
-      res.status(200).json({
-        success: true,
-        message: result.message,
-        ...(result.previewUrl ? { previewUrl: result.previewUrl } : {}),
-        ...(result.devOtp ? { devOtp: result.devOtp } : {}),
-      });
-    } catch (error: any) {
-      const statusCode = error.message.includes("wait") || error.message.includes("requests per hour") ? 429 : 400;
-      res.status(statusCode).json({
+      res.status(200).json(otpSuccessPayload(result, process.env, "development"));
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "";
+      const publicError = publicOtpError(message, "send");
+      if (!message.startsWith("OTP_RATE_LIMIT:") && !message.startsWith("EMAIL_DELIVERY_FAILED:")) {
+        console.error("Failed to resend OTP:", error);
+      }
+      res.status(publicError.status).json({
         success: false,
-        message: error.message || "Failed to resend OTP.",
+        message: publicError.message,
       });
     }
   }
@@ -81,11 +80,14 @@ export class AuthController {
         success: true,
         verified: result.verified,
       });
-    } catch (error: any) {
-      res.status(400).json({
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "";
+      const publicError = publicOtpError(message, "verify");
+      if (publicError.status !== 429) console.error("OTP verification failed:", error);
+      res.status(publicError.status).json({
         success: false,
         verified: false,
-        message: error.message || "OTP verification failed.",
+        message: publicError.message,
       });
     }
   }

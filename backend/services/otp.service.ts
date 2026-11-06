@@ -2,6 +2,12 @@ import crypto from "crypto";
 import bcrypt from "bcryptjs";
 import { prisma } from "../lib/prisma";
 import { EmailService } from "./email.service";
+import {
+  consumeOtpOnce,
+  invalidateOtpAfterDeliveryFailure,
+  isOtpExpired,
+  otpAttemptAllowed,
+} from "../../src/lib/security/otpSecurity";
 
 export class OTPService {
   /**
@@ -26,83 +32,110 @@ export class OTPService {
    */
   public static async sendOTP(
     emailInput: string,
-    redirectTo?: string,
-    isResend: boolean = false
+    redirectTo?: string
   ): Promise<{ success: boolean; message: string; previewUrl?: string; devOtp?: string }> {
-    const email = emailInput.trim().toLowerCase();
+    const email = typeof emailInput === "string" ? emailInput.trim().toLowerCase() : "";
 
     if (!this.isValidEmail(email)) {
       throw new Error("Invalid email format.");
     }
 
-    const existingRecord = await prisma.emailVerification.findUnique({
-      where: { email },
-    });
-
     const now = new Date();
-
-    // Enforce 60-second cooldown rate limit only on explicit resend requests
-    if (isResend && existingRecord && now.getTime() - new Date(existingRecord.lastSentAt).getTime() < 60000) {
-      const waitSeconds = Math.ceil(
-        (60000 - (now.getTime() - new Date(existingRecord.lastSentAt).getTime())) / 1000
-      );
-      throw new Error(`Please wait ${waitSeconds} seconds before requesting a new OTP.`);
+    const existingRecord = await prisma.emailVerification.findUnique({ where: { email } });
+    const oneHourAgo = new Date(now.getTime() - 60 * 60 * 1000);
+    const cooldownBoundary = new Date(now.getTime() - 60 * 1000);
+    if (existingRecord && existingRecord.lastSentAt > cooldownBoundary) {
+      throw new Error("OTP_RATE_LIMIT: Please wait before requesting another verification code.");
+    }
+    if (
+      existingRecord &&
+      existingRecord.windowStart > oneHourAgo &&
+      existingRecord.hourlyCount >= 5
+    ) {
+      throw new Error("OTP_RATE_LIMIT: Too many verification code requests. Try again later.");
     }
 
-    // Check rate limit: Max 5 requests per hour (50 in development)
-    const isDev = process.env.NODE_ENV === "development";
-    const maxHourly = isDev ? 50 : 5;
-    let hourlyCount = 1;
-    let windowStart = now;
-
-    if (existingRecord) {
-      const hoursPassed = (now.getTime() - new Date(existingRecord.windowStart).getTime()) / (1000 * 60 * 60);
-
-      if (hoursPassed < 1) {
-        if (existingRecord.hourlyCount >= maxHourly) {
-          throw new Error(`Too many OTP requests. Maximum ${maxHourly} requests per hour.`);
-        }
-        hourlyCount = existingRecord.hourlyCount + 1;
-        windowStart = existingRecord.windowStart;
-      }
-    }
-
-    // Generate 6-digit OTP & Hash with bcrypt
     const plainOTP = this.generateOTP();
     const otpHash = await bcrypt.hash(plainOTP, 10);
-    const expiresAt = new Date(now.getTime() + 10 * 60 * 1000); // 10 minutes expiration
+    const expiresAt = new Date(now.getTime() + 10 * 60 * 1000);
+    const windowStart = existingRecord && existingRecord.windowStart > oneHourAgo
+      ? existingRecord.windowStart
+      : now;
+    const hourlyCount = existingRecord && existingRecord.windowStart > oneHourAgo
+      ? existingRecord.hourlyCount + 1
+      : 1;
 
-    // Save hashed OTP securely in DB (resets verified to false for new verification flows)
-    await prisma.emailVerification.upsert({
-      where: { email },
-      create: {
-        email,
-        otpHash,
-        expiresAt,
-        attempts: 0,
-        verified: false,
-        lastSentAt: now,
-        hourlyCount,
-        windowStart,
-      },
-      update: {
-        otpHash,
-        expiresAt,
-        attempts: 0,
-        verified: false,
-        lastSentAt: now,
-        hourlyCount,
-        windowStart,
-      },
-    });
+    try {
+      if (!existingRecord) {
+        await prisma.emailVerification.create({
+          data: {
+            email,
+            otpHash,
+            expiresAt,
+            attempts: 0,
+            verified: false,
+            lastSentAt: now,
+            hourlyCount,
+            windowStart,
+          },
+        });
+      } else {
+        const updated = await prisma.emailVerification.updateMany({
+          where: {
+            email,
+            otpHash: existingRecord.otpHash,
+            lastSentAt: { lte: cooldownBoundary },
+            ...(existingRecord.windowStart > oneHourAgo
+              ? { hourlyCount: { lt: 5 }, windowStart: existingRecord.windowStart }
+              : { windowStart: { lte: oneHourAgo } }),
+          },
+          data: {
+            otpHash,
+            expiresAt,
+            attempts: 0,
+            verified: false,
+            lastSentAt: now,
+            hourlyCount,
+            windowStart,
+          },
+        });
+        if (updated.count !== 1) {
+          throw new Error("OTP_RATE_LIMIT: Another verification request was processed. Please wait before retrying.");
+        }
+      }
+    } catch (error: unknown) {
+      if (
+        error instanceof Error &&
+        "code" in error &&
+        error.code === "P2002"
+      ) {
+        throw new Error("OTP_RATE_LIMIT: Another verification request was processed. Please wait before retrying.");
+      }
+      throw error;
+    }
 
-    // Send email via Nodemailer SMTP service
-    const mailResult = await EmailService.sendVerificationOTP(email, plainOTP, redirectTo);
+    let mailResult: { success: boolean; previewUrl?: string };
+    try {
+      mailResult = await EmailService.sendVerificationOTP(email, plainOTP, redirectTo);
+    } catch {
+      const invalidated = await invalidateOtpAfterDeliveryFailure(
+        () =>
+          prisma.emailVerification.updateMany({
+            where: { email, otpHash },
+            data: { attempts: 5, expiresAt: now },
+          }),
+        () => prisma.emailVerification.deleteMany({ where: { email, otpHash } })
+      );
+      if (!invalidated) {
+        console.error("Could not invalidate OTP after email delivery failure.");
+      }
+      throw new Error("EMAIL_DELIVERY_FAILED: Verification email could not be delivered.");
+    }
 
     return {
       success: true,
       message: `Verification code sent to ${email}.`,
-      previewUrl: mailResult.previewUrl,
+      previewUrl: process.env.NODE_ENV === "development" ? mailResult.previewUrl : undefined,
       devOtp: process.env.NODE_ENV === "development" ? plainOTP : undefined,
     };
   }
@@ -114,7 +147,7 @@ export class OTPService {
     emailInput: string,
     redirectTo?: string
   ): Promise<{ success: boolean; message: string; previewUrl?: string; devOtp?: string }> {
-    return this.sendOTP(emailInput, redirectTo, true);
+    return this.sendOTP(emailInput, redirectTo);
   }
 
   /**
@@ -124,7 +157,7 @@ export class OTPService {
     emailInput: string,
     otpInput: string
   ): Promise<{ success: boolean; verified: boolean; message?: string }> {
-    const email = emailInput.trim().toLowerCase();
+    const email = typeof emailInput === "string" ? emailInput.trim().toLowerCase() : "";
     const otp = otpInput ? otpInput.trim() : "";
 
     if (!this.isValidEmail(email)) {
@@ -146,26 +179,30 @@ export class OTPService {
     const now = new Date();
 
     // Check expiration (10 min)
-    if (now > new Date(record.expiresAt)) {
+    if (isOtpExpired(record.expiresAt, now.getTime())) {
+      await prisma.emailVerification.deleteMany({
+        where: { email, otpHash: record.otpHash },
+      });
       throw new Error("Invalid or expired verification code. Please request a new code.");
     }
 
-    // Check maximum attempts (5)
-    if (record.attempts >= 5) {
+    const attempt = await prisma.emailVerification.updateMany({
+      where: {
+        email,
+        otpHash: record.otpHash,
+        expiresAt: { gt: now },
+        attempts: { lt: 5 },
+      },
+      data: { attempts: { increment: 1 } },
+    });
+    if (attempt.count !== 1) {
       throw new Error("Maximum verification attempts exceeded. Please request a new code.");
     }
 
-    // Compare bcrypt hash
     const isMatch = await bcrypt.compare(otp, record.otpHash);
 
     if (!isMatch) {
-      const updatedAttempts = record.attempts + 1;
-      await prisma.emailVerification.update({
-        where: { email },
-        data: { attempts: updatedAttempts },
-      });
-
-      const remainingAttempts = Math.max(0, 5 - updatedAttempts);
+      const remainingAttempts = Math.max(0, 4 - record.attempts);
       throw new Error(
         remainingAttempts > 0
           ? `Invalid verification code. ${remainingAttempts} attempt(s) remaining.`
@@ -174,11 +211,12 @@ export class OTPService {
     }
 
     // Valid OTP: Delete OTP record securely from database (prevents replay attacks)
-    try {
-      await prisma.emailVerification.delete({
-        where: { email },
-      });
-    } catch {
+    const consumed = await consumeOtpOnce(() =>
+      prisma.emailVerification.deleteMany({
+        where: { email, otpHash: record.otpHash, expiresAt: { gt: new Date() } },
+      })
+    );
+    if (!consumed || !otpAttemptAllowed(record.attempts)) {
       return {
         success: false,
         verified: false,

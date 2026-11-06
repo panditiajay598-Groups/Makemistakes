@@ -3,6 +3,8 @@ dotenv.config();
 import nodemailer from "nodemailer";
 import { getOrCreateTransporter } from "../../src/lib/emailTransporter";
 import { EmailTemplates } from "../templates/emailTemplates";
+import { canUseDevelopmentEmailPreview } from "../../src/lib/security/otpSecurity";
+import { getSmtpCredentials } from "../../src/lib/security/emailConfiguration";
 
 interface SmtpAccount {
   user: string;
@@ -26,10 +28,14 @@ export class EmailService {
     const defaultSecure = process.env.SMTP_SECURE === "true" || (rawPort === "465" && process.env.SMTP_SECURE !== "false");
 
     // Primary SMTP User
-    if (process.env.SMTP_USER && process.env.SMTP_PASS && !process.env.SMTP_PASS.includes("Tarak@renu")) {
+    const primaryCredentials = getSmtpCredentials(
+      process.env.SMTP_USER,
+      process.env.SMTP_PASS
+    );
+    if (primaryCredentials) {
       accounts.push({
-        user: process.env.SMTP_USER,
-        pass: process.env.SMTP_PASS,
+        user: primaryCredentials.user,
+        pass: primaryCredentials.password,
         host: defaultHost,
         port: defaultPort,
         secure: defaultSecure,
@@ -55,7 +61,7 @@ export class EmailService {
   }
 
   /**
-   * Sends 6-digit OTP verification email via Round-Robin SMTP, Resend API, or Ethereal test inbox fallback
+   * Sends verification email through configured SMTP/Resend providers.
    */
   public static async sendVerificationOTP(
     email: string,
@@ -105,10 +111,11 @@ export class EmailService {
           html,
         });
 
-        console.log(`[SMTP Success] Email sent to ${email} using account ${selectedAccount.user}`);
+        console.log(`[SMTP Success] Verification email sent using configured SMTP.`);
         return { success: true };
-      } catch (err: any) {
-        console.warn(`[SMTP Warning] Account ${selectedAccount.user} failed: ${err?.message}. Trying Resend API fallback...`);
+      } catch (err: unknown) {
+        const code = err instanceof Error && "code" in err ? err.code : "provider error";
+        console.warn("[SMTP Warning] Configured SMTP delivery failed:", code);
       }
     }
 
@@ -133,41 +140,40 @@ export class EmailService {
 
         const resData = await response.json();
         if (response.ok && resData.id) {
-          console.log(`[Resend API Success] Email ID: ${resData.id} delivered to ${email}`);
+          console.log("[Resend API Success] Verification email accepted.");
           return { success: true };
         }
-        console.warn("[Resend API Error Notice]:", resData);
-      } catch (err: any) {
-        console.warn("Resend API failed, trying test inbox fallback:", err?.message);
+        console.warn("[Resend API Error Notice]:", response.status);
+      } catch (err: unknown) {
+        console.warn(
+          "Resend API delivery failed:",
+          err instanceof Error ? err.name : "provider error"
+        );
       }
     }
 
-    // 3. Fallback: Ethereal Test Inbox for Development
-    try {
-      const testAccount = await nodemailer.createTestAccount();
-      const etherealTransporter = getOrCreateTransporter({
-        host: "smtp.ethereal.email",
-        port: 587,
-        secure: false,
-        auth: {
-          user: testAccount.user,
-          pass: testAccount.pass,
-        },
-      });
-
-      const info = await etherealTransporter.sendMail({
-        from: process.env.SMTP_FROM || `"MakeMistakes Team" <Support@makemistakes.in>`,
-        to: email,
-        subject,
-        html,
-      });
-
-      const previewUrl = nodemailer.getTestMessageUrl(info) || undefined;
-      return { success: true, previewUrl };
-    } catch (error: any) {
-      console.error("Error sending verification email:", error);
-      throw new Error("Unable to send verification email.");
+    if (canUseDevelopmentEmailPreview(process.env)) {
+      try {
+        const testAccount = await nodemailer.createTestAccount();
+        const etherealTransporter = getOrCreateTransporter({
+          host: "smtp.ethereal.email",
+          port: 587,
+          secure: false,
+          auth: { user: testAccount.user, pass: testAccount.pass },
+        });
+        const info = await etherealTransporter.sendMail({
+          from: process.env.SMTP_FROM || `"MakeMistakes Team" <Support@makemistakes.in>`,
+          to: email,
+          subject,
+          html,
+        });
+        return { success: true, previewUrl: nodemailer.getTestMessageUrl(info) || undefined };
+      } catch (error) {
+        console.error("Development test-email delivery failed:", error);
+      }
     }
+
+    throw new Error("EMAIL_DELIVERY_FAILED: Unable to send verification email.");
   }
 }
 

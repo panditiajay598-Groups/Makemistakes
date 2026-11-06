@@ -7,7 +7,15 @@ import {
   readWorkspaceTextFile,
   writeWorkspaceTextFile,
 } from "@/lib/buildos/files";
-import { getWorkspaceMeta, upsertWorkspaceMeta } from "@/lib/buildos/workspaceService";
+import { upsertWorkspaceMeta } from "@/lib/buildos/workspaceService";
+import { getAuthenticatedIdentity } from "@/lib/security/sessionIdentity";
+import { requireOwnedWorkspace } from "@/lib/security/workspaceOwnership";
+import { recordNovaActivity } from "@/lib/nova/activity";
+import {
+  hasNovaImplementationPlan,
+  matchesNovaImplementationProposal,
+} from "@/lib/nova/conversations";
+import { getDb } from "@/lib/mongodb";
 
 export const runtime = "nodejs";
 
@@ -15,22 +23,18 @@ function bad(message: string, status = 400) {
   return NextResponse.json({ error: message }, { status });
 }
 
-async function assertOwned(userId: string, problemId: string) {
-  const meta = await getWorkspaceMeta(userId, problemId);
-  if (!meta) throw Object.assign(new Error("Workspace not found"), { status: 404 });
-  return meta;
-}
-
 /** GET — list tree or read one file */
 export async function GET(req: Request) {
   try {
+    const identity = await getAuthenticatedIdentity(req);
+    if (!identity) return bad("Authentication required", 401);
+
     const { searchParams } = new URL(req.url);
-    const userId = searchParams.get("userId")?.trim();
     const problemId = searchParams.get("problemId")?.trim();
     const filePath = searchParams.get("path")?.trim();
-    if (!userId || !problemId) return bad("userId and problemId are required");
+    if (!problemId) return bad("problemId is required");
 
-    await assertOwned(userId, problemId);
+    const { userId } = await requireOwnedWorkspace(identity, problemId);
     const root = workspaceDir(userId, problemId);
 
     if (filePath) {
@@ -80,19 +84,62 @@ export async function GET(req: Request) {
 /** PUT — save file content */
 export async function PUT(req: Request) {
   try {
+    const identity = await getAuthenticatedIdentity(req);
+    if (!identity) return bad("Authentication required", 401);
+
     const body = await req.json();
-    const userId = String(body.userId || "").trim();
     const problemId = String(body.problemId || "").trim();
     const filePath = String(body.path || "").trim();
     const content = String(body.content ?? "");
-    if (!userId || !problemId || !filePath) {
-      return bad("userId, problemId, and path are required");
+    if (!problemId || !filePath) {
+      return bad("problemId and path are required");
     }
 
-    await assertOwned(userId, problemId);
+    const { userId } = await requireOwnedWorkspace(identity, problemId);
     const root = workspaceDir(userId, problemId);
+    if (body.source === "nova_approved") {
+      const db = await getDb();
+      if (await hasNovaImplementationPlan(db, userId, problemId)) {
+        const implementation = body.implementation;
+        if (
+          !implementation ||
+          typeof implementation.conversationId !== "string" ||
+          typeof implementation.stepId !== "string" ||
+          typeof implementation.proposalId !== "string" ||
+          !await matchesNovaImplementationProposal(
+            db,
+            userId,
+            problemId,
+            implementation.conversationId,
+            implementation.stepId,
+            implementation.proposalId,
+            content
+          )
+        ) {
+          return bad("This proposal is not the approved implementation for the current plan step.", 409);
+        }
+      }
+    }
+    let unchanged = false;
+    try {
+      unchanged = readWorkspaceTextFile(root, filePath) === content;
+    } catch {
+      unchanged = false;
+    }
     writeWorkspaceTextFile(root, filePath, content);
     await upsertWorkspaceMeta({ userId, problemId, status: "ready" });
+    if (!unchanged) {
+      const source = body.source === "nova_approved" ? "proposal_approved" : "file_saved";
+      await recordNovaActivity({
+        userId,
+        problemId,
+        type: source,
+        filePath,
+        summary: source === "proposal_approved"
+          ? "Student approved and applied a Nova code proposal."
+          : "Workspace file was saved.",
+      });
+    }
 
     return NextResponse.json({ ok: true, path: filePath });
   } catch (err: any) {
@@ -106,19 +153,28 @@ export async function PUT(req: Request) {
 /** POST — create file */
 export async function POST(req: Request) {
   try {
+    const identity = await getAuthenticatedIdentity(req);
+    if (!identity) return bad("Authentication required", 401);
+
     const body = await req.json();
-    const userId = String(body.userId || "").trim();
     const problemId = String(body.problemId || "").trim();
     const filePath = String(body.path || "").trim();
     const content = String(body.content ?? "");
-    if (!userId || !problemId || !filePath) {
-      return bad("userId, problemId, and path are required");
+    if (!problemId || !filePath) {
+      return bad("problemId and path are required");
     }
 
-    await assertOwned(userId, problemId);
+    const { userId } = await requireOwnedWorkspace(identity, problemId);
     const root = workspaceDir(userId, problemId);
     createWorkspaceFile(root, filePath, content);
     await upsertWorkspaceMeta({ userId, problemId, status: "ready" });
+    await recordNovaActivity({
+      userId,
+      problemId,
+      type: "file_created",
+      filePath,
+      summary: "Workspace file was created.",
+    });
 
     return NextResponse.json({ ok: true, path: filePath, tree: listWorkspaceTree(root) });
   } catch (err: any) {
@@ -132,18 +188,27 @@ export async function POST(req: Request) {
 /** DELETE — delete file */
 export async function DELETE(req: Request) {
   try {
+    const identity = await getAuthenticatedIdentity(req);
+    if (!identity) return bad("Authentication required", 401);
+
     const { searchParams } = new URL(req.url);
-    const userId = searchParams.get("userId")?.trim();
     const problemId = searchParams.get("problemId")?.trim();
     const filePath = searchParams.get("path")?.trim();
-    if (!userId || !problemId || !filePath) {
-      return bad("userId, problemId, and path are required");
+    if (!problemId || !filePath) {
+      return bad("problemId and path are required");
     }
 
-    await assertOwned(userId, problemId);
+    const { userId } = await requireOwnedWorkspace(identity, problemId);
     const root = workspaceDir(userId, problemId);
     deleteWorkspaceFile(root, filePath);
     await upsertWorkspaceMeta({ userId, problemId, status: "ready" });
+    await recordNovaActivity({
+      userId,
+      problemId,
+      type: "file_deleted",
+      filePath,
+      summary: "Workspace file was deleted.",
+    });
 
     return NextResponse.json({ ok: true, tree: listWorkspaceTree(root) });
   } catch (err: any) {

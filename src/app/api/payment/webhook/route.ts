@@ -20,11 +20,16 @@ export async function POST(req: Request) {
 
     const result = await PaymentService.processWebhook({ rawBody, signature });
     return NextResponse.json(result);
-  } catch (err: any) {
-    console.error("[Webhook Error]:", err);
-    const status = err.message?.includes("INVALID_WEBHOOK_SIGNATURE") ? 400 : 500;
+  } catch (err: unknown) {
+    const code = err instanceof Error ? err.message : "";
+    console.error("[Webhook Error]:", code.split(":")[0] || "UNKNOWN");
+    const status = code.includes("INVALID_WEBHOOK_SIGNATURE") || code.includes("INVALID_WEBHOOK")
+      ? 400
+      : code.includes("PAYMENT_UNAVAILABLE")
+      ? 503
+      : 500;
     return NextResponse.json(
-      { success: false, error: err.message || "Webhook processing error" },
+      { success: false, error: "Webhook processing failed" },
       { status }
     );
   }

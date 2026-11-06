@@ -12,6 +12,10 @@ import {
 import { getDb, getMongoClient } from "../src/lib/mongodb";
 import fs from "fs";
 
+declare global {
+  var __dnsConfigured: boolean | undefined;
+}
+
 interface TestResult {
   name: string;
   passed: boolean;
@@ -153,8 +157,8 @@ async function runDnsVerification() {
   }
 
   assert(
-    "6.1 Exactly one file in src/ contains dns.setServers (src/lib/dns.ts)",
-    filesWithSetServers.length === 1 && filesWithSetServers[0] === "src/lib/dns.ts",
+    "6.1 Exactly one file in src/ contains dns.setServers (src/lib/dns.js)",
+    filesWithSetServers.length === 1 && filesWithSetServers[0] === "src/lib/dns.js",
     `Files found with dns.setServers in src/: ${JSON.stringify(filesWithSetServers)}`
   );
 

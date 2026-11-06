@@ -16,7 +16,7 @@ export default function WhyMakeMistakes() {
   ];
 
   return (
-    <section className="py-20 bg-[#F4F3EE] border-t border-zinc-200">
+    <section id="features" className="scroll-mt-24 py-20 bg-[#F4F3EE] border-t border-zinc-200">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="text-center max-w-3xl mx-auto mb-16">
           <span className="text-xs font-mono font-semibold uppercase tracking-wider text-teal-800 bg-teal-100 px-3 py-1 rounded-full">

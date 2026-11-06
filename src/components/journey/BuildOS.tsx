@@ -1,6 +1,7 @@
 "use client";
 
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import Link from "next/link";
 import {
   Check,
   FileCode,
@@ -18,31 +19,45 @@ import {
   Smartphone,
   PanelLeftClose,
   PanelLeftOpen,
+  PanelRightClose,
   ChevronDown,
   ChevronUp,
-  Layers,
-  Database,
   Compass,
-  Code2,
-  ShieldAlert,
-  Cpu,
+  RefreshCw,
+  UserRound,
 } from "lucide-react";
 import { getJourneyUserId } from "@/lib/journeyUser";
 import { ProblemData } from "@/lib/problemContent";
 import { deriveBuildWorkspace, validateMissionCode, BuildMission } from "@/lib/buildWorkspace";
+import {
+  CodeProposal,
+  NovaImplementationPlanCard,
+  NovaModeSelector,
+  type NovaMode,
+  type ProposalStatus,
+} from "@/components/journey/buildos/BuildOSControls";
+import type { ImplementationStepStatus, NovaImplementationPlan } from "@/lib/nova/implementationPlan";
+import {
+  NovaImplementationCard,
+  NovaMessageContent,
+} from "@/components/journey/buildos/NovaConversation";
 
 type FileNode =
   | { type: "file"; name: string; path: string }
   | { type: "dir"; name: string; path: string; children: FileNode[] };
 
-type EnvChecks = {
-  node: boolean;
-  next: boolean;
-  react: boolean;
-  typescript: boolean;
-  ui: boolean;
-  three: boolean;
+const subscribeToDesktopViewport = (onChange: () => void) => {
+  const query = window.matchMedia("(min-width: 1024px)");
+  query.addEventListener("change", onChange);
+  return () => query.removeEventListener("change", onChange);
 };
+
+const getDesktopViewportSnapshot = () => window.matchMedia("(min-width: 1024px)").matches;
+const subscribeToViewportWidth = (onChange: () => void) => {
+  window.addEventListener("resize", onChange);
+  return () => window.removeEventListener("resize", onChange);
+};
+const getViewportWidth = () => window.innerWidth;
 
 export type RuntimeState = "IDLE" | "SAVING" | "STARTING" | "RUNNING" | "FAILED" | "STOPPED";
 
@@ -51,9 +66,53 @@ type Props = {
   productName?: string;
   problemData?: ProblemData | null;
   onReadyChange?: (ready: boolean) => void;
+  onBackToJourney?: () => void;
   onComplete?: () => void;
   userId?: string;
 };
+
+const ROADMAP_PHASES = [
+  {
+    name: "Foundation & Setup",
+    purpose: "Establish the product foundation.",
+    matches: /\b(shell|foundation|setup|requirements?|problem definition|target audience|objectives?)\b/i,
+  },
+  {
+    name: "Design & Architecture",
+    purpose: "Define the experience and technical architecture.",
+    matches: /\b(design|architecture|user flows?|information architecture|ui\/ux|wireframes?|technology decisions?|navbar|brand|hero)\b/i,
+  },
+  {
+    name: "Core Features",
+    purpose: "Build the essential product functionality.",
+    matches: /\b(core|feature|form|list|detail|component|interface|interaction|business logic)\b/i,
+  },
+  {
+    name: "Authentication & Integrations",
+    purpose: "Connect identity, data, and external services.",
+    matches: /\b(auth|sign.?in|authorization|database|api|integrat|external service|persist|sync)\b/i,
+  },
+  {
+    name: "Dashboard & Workflows",
+    purpose: "Complete the product's end-to-end workflows.",
+    matches: /\b(dashboard|workflow|management|data handling|automation|application interaction)\b/i,
+  },
+  {
+    name: "Polish & Deploy",
+    purpose: "Prepare the product for release.",
+    matches: /\b(polish|test|responsive|performance|bug|deploy|release|empty state)\b/i,
+  },
+] as const;
+
+function getRoadmapPhaseIndex(mission: BuildMission): number {
+  const taskText = `${mission.title} ${mission.whatThisMeans}`;
+  if (ROADMAP_PHASES[5].matches.test(taskText)) return 5;
+  if (ROADMAP_PHASES[3].matches.test(taskText)) return 3;
+  if (ROADMAP_PHASES[4].matches.test(taskText)) return 4;
+  if (ROADMAP_PHASES[1].matches.test(taskText)) return 1;
+  if (ROADMAP_PHASES[0].matches.test(taskText)) return 0;
+  return 2;
+}
 
 function flattenFiles(nodes: FileNode[], acc: string[] = []): string[] {
   for (const n of nodes) {
@@ -61,6 +120,16 @@ function flattenFiles(nodes: FileNode[], acc: string[] = []): string[] {
     else flattenFiles(n.children, acc);
   }
   return acc;
+}
+
+function stableProposalId(planId: string, stepId: string, filePath: string, code: string): string {
+  const value = `${planId}\0${stepId}\0${filePath}\0${code}`;
+  let hash = 2166136261;
+  for (let index = 0; index < value.length; index++) {
+    hash ^= value.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return `proposal-${(hash >>> 0).toString(16)}`;
 }
 
 function FileTree({
@@ -74,6 +143,10 @@ function FileTree({
   onOpen: (path: string) => void;
   depth?: number;
 }) {
+  if (nodes.length === 0) {
+    return <p className="px-2 py-3 text-[11px] text-zinc-500">No workspace files found.</p>;
+  }
+
   return (
     <ul className="space-y-0.5">
       {nodes.map((n) =>
@@ -83,7 +156,7 @@ function FileTree({
               className="flex items-center gap-1.5 px-2 py-1 text-[11px] text-zinc-400 font-mono"
               style={{ paddingLeft: 8 + depth * 10 }}
             >
-              <Folder className="h-3 w-3 text-teal-500/80" />
+              <Folder className="h-3 w-3 text-green-500/80" />
               {n.name}
             </div>
             <FileTree nodes={n.children} active={active} onOpen={onOpen} depth={depth + 1} />
@@ -95,7 +168,7 @@ function FileTree({
               onClick={() => onOpen(n.path)}
               className={`w-full flex items-center gap-1.5 px-2 py-1.5 text-left text-[11px] font-mono rounded ${
                 active === n.path
-                  ? "bg-teal-900/50 text-teal-200 font-semibold"
+                  ? "bg-green-900/50 text-green-200 font-semibold"
                   : "text-zinc-400 hover:bg-zinc-800/80 hover:text-zinc-200"
               }`}
               style={{ paddingLeft: 8 + depth * 10 }}
@@ -110,9 +183,159 @@ function FileTree({
   );
 }
 
-export default function BuildOS({ problemId, productName: propName, problemData, onReadyChange, onComplete, userId: propUserId }: Props) {
+type ResizeOrientation = "vertical" | "horizontal";
+
+function PanelResizeHandle({
+  orientation,
+  label,
+  value,
+  min,
+  max,
+  reverseKeyboard = false,
+  onResizeStart,
+  onResizeBy,
+  onReset,
+}: {
+  orientation: ResizeOrientation;
+  label: string;
+  value: number;
+  min: number;
+  max: number;
+  reverseKeyboard?: boolean;
+  onResizeStart: (event: React.PointerEvent<HTMLDivElement>) => void;
+  onResizeBy: (delta: number) => void;
+  onReset: () => void;
+}) {
+  const vertical = orientation === "vertical";
+
+  return (
+    <div
+      role="separator"
+      tabIndex={0}
+      aria-label={label}
+      aria-orientation={orientation}
+      aria-valuenow={Math.round(value)}
+      aria-valuemin={min}
+      aria-valuemax={max}
+      onPointerDown={onResizeStart}
+      onDoubleClick={onReset}
+      onKeyDown={(event) => {
+        const key = event.key;
+        if (key === "Home") {
+          event.preventDefault();
+          onReset();
+          return;
+        }
+
+        const positiveKey = vertical ? "ArrowRight" : "ArrowUp";
+        const negativeKey = vertical ? "ArrowLeft" : "ArrowDown";
+        if (key !== positiveKey && key !== negativeKey) return;
+        event.preventDefault();
+        const direction = key === positiveKey ? 1 : -1;
+        onResizeBy(direction * 24 * (reverseKeyboard ? -1 : 1));
+      }}
+      className={`group relative z-10 shrink-0 touch-none outline-none focus-visible:bg-emerald-500/30 ${
+        vertical ? "w-1.5 cursor-col-resize" : "h-1.5 cursor-row-resize"
+      }`}
+      style={{ touchAction: "none" }}
+    >
+      <span
+        aria-hidden="true"
+        className={`absolute rounded-full bg-[#39433C] transition-colors group-hover:bg-emerald-500 group-focus-visible:bg-emerald-400 ${
+          vertical ? "inset-y-0 left-[2px] w-[2px]" : "inset-x-0 top-[2px] h-[2px]"
+        }`}
+      />
+    </div>
+  );
+}
+
+function PreviewPane({
+  previewHtml,
+  runtimeState,
+  runError,
+  isRunInProgress,
+  previewKey,
+  previewRef,
+  deviceMode,
+  runProject,
+  refreshPreview,
+}: {
+  previewHtml: string | null;
+  runtimeState: RuntimeState;
+  runError: string | null;
+  isRunInProgress: boolean;
+  previewKey: number;
+  previewRef: React.RefObject<HTMLIFrameElement | null>;
+  deviceMode: "desktop" | "tablet" | "mobile";
+  runProject: () => void;
+  refreshPreview: () => void;
+}) {
+  return (
+    <div className="relative flex h-full min-h-0 min-w-0 justify-center overflow-auto bg-[#090B0A] p-2">
+      <div
+        className={`h-full min-h-0 shrink-0 overflow-hidden rounded bg-white shadow-lg transition-[width] duration-200 ${
+          deviceMode === "mobile"
+            ? "w-[375px] max-w-full"
+            : deviceMode === "tablet"
+            ? "w-[768px] max-w-full"
+            : "w-full"
+        }`}
+      >
+        {previewHtml && runtimeState !== "FAILED" ? (
+          <iframe
+            key={previewKey}
+            ref={previewRef}
+            srcDoc={previewHtml}
+            title="BuildOS Preview Sandbox"
+            className="h-full w-full border-none"
+            sandbox="allow-scripts allow-modals"
+          />
+        ) : (
+          <div className="flex h-full w-full flex-col items-center justify-center bg-[#101310] p-6 text-center text-zinc-400">
+            {runtimeState === "FAILED" ? (
+              <>
+                <AlertTriangle className="mb-2 h-7 w-7 text-rose-400" />
+                <p className="text-xs font-semibold text-rose-200">Preview did not start</p>
+                <p className="mt-1 max-w-sm text-[11px] text-zinc-400">{runError || "Review the Console for details, then try again."}</p>
+                <button type="button" onClick={runProject} className="mt-3 rounded border border-zinc-700 px-3 py-1.5 text-[11px] text-zinc-200 hover:bg-zinc-800">Try again</button>
+              </>
+            ) : isRunInProgress ? (
+              <>
+                <Loader2 className="mb-2 h-6 w-6 animate-spin text-green-400" />
+                <p className="text-xs font-semibold text-zinc-200">Preparing preview…</p>
+                <p className="mt-1 max-w-sm text-[11px] text-zinc-500">BuildOS is validating files and loading the browser preview.</p>
+              </>
+            ) : (
+              <>
+                <Play className="mb-2 h-7 w-7 text-zinc-500" />
+                <p className="text-xs font-semibold text-zinc-300">Run the project to open a preview</p>
+                <p className="mt-1 max-w-sm text-[11px] text-zinc-500">
+                  This is a browser-based React preview, not a full Next.js server.
+                </p>
+              </>
+            )}
+          </div>
+        )}
+      </div>
+      <button
+        type="button"
+        onClick={refreshPreview}
+        disabled={!previewHtml || runtimeState === "FAILED"}
+        aria-label="Refresh preview"
+        title="Refresh preview"
+        className="absolute right-4 top-4 rounded border border-zinc-700 bg-[#101310] p-1.5 text-zinc-300 hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-40"
+      >
+        <RefreshCw className="h-3.5 w-3.5" />
+      </button>
+    </div>
+  );
+}
+
+export default function BuildOS({ problemId, productName: propName, problemData, onReadyChange, onBackToJourney, onComplete, userId: propUserId }: Props) {
   const userId = useMemo(() => propUserId || getJourneyUserId(), [propUserId]);
   const workspace = useMemo(() => deriveBuildWorkspace(problemData), [problemData]);
+  const isDesktop = useSyncExternalStore(subscribeToDesktopViewport, getDesktopViewportSnapshot, () => false);
+  const viewportWidth = useSyncExternalStore(subscribeToViewportWidth, getViewportWidth, () => 0);
   const productName = propName || workspace.productName;
 
   // Determine difficulty level: Beginner, Intermediate, or Advanced
@@ -130,9 +353,6 @@ export default function BuildOS({ problemId, productName: propName, problemData,
     return "guided";
   }, [difficulty]);
 
-  const buildModeLabel = buildMode === "guided" ? "Guided Build" : buildMode === "assisted" ? "Assisted Build" : "Independent Build";
-  const buildModeColor = buildMode === "guided" ? "emerald" : buildMode === "assisted" ? "amber" : "violet";
-
   // Entire Previous Journey Context (Phases 1 - 4)
   const [journeyPhases, setJourneyPhases] = useState<any>(null);
   const [journeyLoading, setJourneyLoading] = useState(true);
@@ -140,10 +360,14 @@ export default function BuildOS({ problemId, productName: propName, problemData,
 
   const [phase, setPhase] = useState<"booting" | "ready" | "error">("booting");
   const [logs, setLogs] = useState<string[]>(["Preparing BuildOS workspace..."]);
-  const [checks, setChecks] = useState<EnvChecks | null>(null);
   const [tree, setTree] = useState<FileNode[]>([]);
   const [activePath, setActivePath] = useState("app/page.tsx");
   const [content, setContent] = useState("");
+  const latestEditorContent = useRef("");
+  const updateEditorContent = useCallback((nextContent: string) => {
+    latestEditorContent.current = nextContent;
+    setContent(nextContent);
+  }, []);
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
 
@@ -152,32 +376,316 @@ export default function BuildOS({ problemId, productName: propName, problemData,
   const [previewHtml, setPreviewHtml] = useState<string | null>(null);
   const [previewKey, setPreviewKey] = useState<number>(0);
   const [runError, setRunError] = useState<string | null>(null);
-  const [workspaceId, setWorkspaceId] = useState<string | null>(null);
 
   // Active step / mission state
   const [activeMissionIndex, setActiveMissionIndex] = useState(0);
   const [completedSteps, setCompletedSteps] = useState<number[]>([]);
+  const [dependencyBlockedSteps, setDependencyBlockedSteps] = useState<number[]>([]);
   const [validationResult, setValidationResult] = useState<{ ok: boolean; failures: string[] } | null>(null);
 
   // UI Panels & IDE State
-  const [showExplorer, setShowExplorer] = useState(true);
-  const [showNovaPanel, setShowNovaPanel] = useState(true);
-  const [showRoadmapSection, setShowRoadmapSection] = useState(false);
+  const [desktopExplorerOpen, setDesktopExplorerOpen] = useState(true);
+  const [mobileExplorerOpen, setMobileExplorerOpen] = useState(false);
+  const [desktopNovaPanelOpen, setDesktopNovaPanelOpen] = useState(true);
+  const [mobileNovaPanelOpen, setMobileNovaPanelOpen] = useState(false);
+  const showExplorer = isDesktop ? desktopExplorerOpen : mobileExplorerOpen;
+  const showNovaPanel = isDesktop ? desktopNovaPanelOpen : mobileNovaPanelOpen;
+  const [showRoadmapSection, setShowRoadmapSection] = useState(true);
+  const [expandedRoadmapPhase, setExpandedRoadmapPhase] = useState<number | null>(null);
+  const [roadmapHeight, setRoadmapHeight] = useState(48);
+  const [explorerWidth, setExplorerWidth] = useState(320);
+  const [novaPanelWidth, setNovaPanelWidth] = useState(360);
+  const [bottomPanelHeight, setBottomPanelHeight] = useState(200);
+  const [bottomPanelOpen, setBottomPanelOpen] = useState(true);
+  const layoutKey = `buildos:layout:v1:${problemId || "default"}`;
+  const [loadedLayoutKey, setLoadedLayoutKey] = useState<string | null>(null);
+  const workspaceLayoutRef = useRef<HTMLDivElement>(null);
+  const explorerPanelRef = useRef<HTMLElement>(null);
+  const mainWorkspaceRef = useRef<HTMLElement>(null);
+  const resizeCleanupRef = useRef<(() => void) | null>(null);
+  const workspaceWidth = workspaceLayoutRef.current?.clientWidth || viewportWidth;
+  const maxExplorerWidth = Math.max(
+    260,
+    Math.min(480, workspaceWidth - 320 - (showNovaPanel ? 280 : 0) - 12)
+  );
+  const displayedExplorerWidth = Math.min(explorerWidth, maxExplorerWidth);
+  const maxNovaPanelWidth = Math.max(
+    280,
+    Math.min(480, workspaceWidth - 320 - (showExplorer ? displayedExplorerWidth : 0) - 12)
+  );
+  const displayedNovaPanelWidth = Math.min(novaPanelWidth, maxNovaPanelWidth);
   const [openTabs, setOpenTabs] = useState<string[]>(["app/page.tsx"]);
-  const [activeBottomTab, setActiveBottomTab] = useState<"preview" | "console" | "tests">("preview");
+  const [activeConsoleTab, setActiveConsoleTab] = useState<"problems" | "console" | "terminal" | "tests" | "build">("console");
+  const [workspaceMode, setWorkspaceMode] = useState<"code" | "preview" | "split">("split");
+  const [splitRatio, setSplitRatio] = useState(50);
   const [deviceMode, setDeviceMode] = useState<"desktop" | "tablet" | "mobile">("desktop");
   const [copied, setCopied] = useState(false);
 
+  useEffect(() => {
+    const frame = window.requestAnimationFrame(() => {
+      try {
+        const saved = window.localStorage.getItem(layoutKey);
+        if (saved) {
+          const layout = JSON.parse(saved) as Record<string, unknown>;
+          if (typeof layout.explorerWidth === "number" && Number.isFinite(layout.explorerWidth)) {
+            setExplorerWidth(Math.min(480, Math.max(260, layout.explorerWidth)));
+          }
+          if (typeof layout.novaPanelWidth === "number" && Number.isFinite(layout.novaPanelWidth)) {
+            setNovaPanelWidth(Math.min(480, Math.max(280, layout.novaPanelWidth)));
+          }
+          if (typeof layout.bottomPanelHeight === "number" && Number.isFinite(layout.bottomPanelHeight)) {
+            setBottomPanelHeight(Math.min(520, Math.max(150, layout.bottomPanelHeight)));
+          }
+          if (typeof layout.explorerOpen === "boolean") setDesktopExplorerOpen(layout.explorerOpen);
+          if (typeof layout.novaOpen === "boolean") setDesktopNovaPanelOpen(layout.novaOpen);
+          if (typeof layout.roadmapOpen === "boolean") setShowRoadmapSection(layout.roadmapOpen);
+          if (typeof layout.roadmapHeight === "number" && Number.isFinite(layout.roadmapHeight)) {
+            setRoadmapHeight(Math.min(70, Math.max(30, layout.roadmapHeight)));
+          }
+          if (typeof layout.bottomPanelOpen === "boolean") setBottomPanelOpen(layout.bottomPanelOpen);
+          if (typeof layout.expandedRoadmapPhase === "number" && layout.expandedRoadmapPhase >= -1 && layout.expandedRoadmapPhase < ROADMAP_PHASES.length) {
+            setExpandedRoadmapPhase(layout.expandedRoadmapPhase);
+          }
+        }
+      } catch (error) {
+        console.warn("[BuildOS] Could not restore workspace panel preferences.", {
+          errorName: error instanceof Error ? error.name : "UnknownError",
+        });
+      }
+      setLoadedLayoutKey(layoutKey);
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [layoutKey]);
+
+  useEffect(() => {
+    if (loadedLayoutKey !== layoutKey) return;
+    const timer = window.setTimeout(() => {
+      try {
+        window.localStorage.setItem(
+          layoutKey,
+          JSON.stringify({
+            explorerWidth,
+            novaPanelWidth,
+            bottomPanelHeight,
+            explorerOpen: desktopExplorerOpen,
+            novaOpen: desktopNovaPanelOpen,
+            roadmapOpen: showRoadmapSection,
+            roadmapHeight,
+            expandedRoadmapPhase,
+            bottomPanelOpen,
+          })
+        );
+      } catch (error) {
+        console.warn("[BuildOS] Could not save workspace panel preferences.", {
+          errorName: error instanceof Error ? error.name : "UnknownError",
+        });
+      }
+    }, 200);
+    return () => window.clearTimeout(timer);
+  }, [
+    bottomPanelHeight,
+    bottomPanelOpen,
+    desktopExplorerOpen,
+    desktopNovaPanelOpen,
+    expandedRoadmapPhase,
+    explorerWidth,
+    layoutKey,
+    loadedLayoutKey,
+    novaPanelWidth,
+    roadmapHeight,
+    showRoadmapSection,
+  ]);
+
+  const resizePanelBy = useCallback((panel: "explorer" | "nova" | "console" | "split" | "roadmap", delta: number) => {
+    if (panel === "explorer") {
+      const availableWidth = workspaceLayoutRef.current?.clientWidth ?? window.innerWidth;
+      const maxWidth = Math.max(
+        260,
+        Math.min(480, availableWidth - 320 - (showNovaPanel ? 280 : 0) - 12)
+      );
+      setExplorerWidth(Math.min(maxWidth, Math.max(260, displayedExplorerWidth + delta)));
+      return;
+    }
+
+    if (panel === "nova") {
+      const availableWidth = workspaceLayoutRef.current?.clientWidth ?? window.innerWidth;
+      const maxWidth = Math.max(
+        280,
+        Math.min(480, availableWidth - 320 - (showExplorer ? displayedExplorerWidth : 0) - 12)
+      );
+      setNovaPanelWidth(Math.min(maxWidth, Math.max(280, displayedNovaPanelWidth + delta)));
+      return;
+    }
+
+    if (panel === "split") {
+      const availableWidth = mainWorkspaceRef.current?.clientWidth ?? window.innerWidth;
+      setSplitRatio((ratio) => Math.min(70, Math.max(30, ratio + (delta / availableWidth) * 100)));
+      return;
+    }
+
+    if (panel === "roadmap") {
+      const availableHeight = explorerPanelRef.current?.clientHeight ?? window.innerHeight;
+      setRoadmapHeight((height) => Math.min(70, Math.max(30, height + (delta / availableHeight) * 100)));
+      return;
+    }
+
+    const availableHeight = mainWorkspaceRef.current?.clientHeight ?? window.innerHeight;
+    const maxHeight = Math.max(150, Math.min(520, availableHeight - 180));
+    setBottomPanelHeight((height) => Math.min(maxHeight, Math.max(150, height + delta)));
+  }, [displayedExplorerWidth, displayedNovaPanelWidth, showExplorer, showNovaPanel]);
+
+  const beginPanelResize = useCallback((
+    panel: "explorer" | "nova" | "console" | "split" | "roadmap",
+    event: React.PointerEvent<HTMLDivElement>
+  ) => {
+    event.preventDefault();
+    resizeCleanupRef.current?.();
+
+    const startX = event.clientX;
+    const startY = event.clientY;
+    const startExplorerWidth = displayedExplorerWidth;
+    const startNovaWidth = displayedNovaPanelWidth;
+    const startBottomHeight = bottomPanelHeight;
+    const startSplitRatio = splitRatio;
+    const startRoadmapHeight = roadmapHeight;
+    const previousCursor = document.body.style.cursor;
+    const previousUserSelect = document.body.style.userSelect;
+    document.body.style.cursor = panel === "console" ? "row-resize" : "col-resize";
+    document.body.style.userSelect = "none";
+
+    const move = (moveEvent: PointerEvent) => {
+      if (panel === "explorer") {
+        const availableWidth = workspaceLayoutRef.current?.clientWidth ?? window.innerWidth;
+        const maxWidth = Math.max(
+          260,
+          Math.min(480, availableWidth - 320 - (showNovaPanel ? 280 : 0) - 12)
+        );
+        setExplorerWidth(Math.min(maxWidth, Math.max(260, startExplorerWidth + moveEvent.clientX - startX)));
+      } else if (panel === "nova") {
+        const availableWidth = workspaceLayoutRef.current?.clientWidth ?? window.innerWidth;
+        const maxWidth = Math.max(
+          280,
+          Math.min(480, availableWidth - 320 - (showExplorer ? displayedExplorerWidth : 0) - 12)
+        );
+        setNovaPanelWidth(Math.min(maxWidth, Math.max(280, startNovaWidth + startX - moveEvent.clientX)));
+      } else if (panel === "split") {
+        const availableWidth = mainWorkspaceRef.current?.clientWidth ?? window.innerWidth;
+        const nextRatio = startSplitRatio + ((moveEvent.clientX - startX) / availableWidth) * 100;
+        setSplitRatio(Math.min(70, Math.max(30, nextRatio)));
+      } else if (panel === "roadmap") {
+        const availableHeight = explorerPanelRef.current?.clientHeight ?? window.innerHeight;
+        const nextHeight = startRoadmapHeight + ((moveEvent.clientY - startY) / availableHeight) * 100;
+        setRoadmapHeight(Math.min(70, Math.max(30, nextHeight)));
+      } else {
+        const availableHeight = mainWorkspaceRef.current?.clientHeight ?? window.innerHeight;
+        const maxHeight = Math.max(150, Math.min(520, availableHeight - 180));
+        setBottomPanelHeight(Math.min(maxHeight, Math.max(150, startBottomHeight + startY - moveEvent.clientY)));
+      }
+    };
+
+    const cleanup = () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", cleanup);
+      window.removeEventListener("pointercancel", cleanup);
+      window.removeEventListener("blur", cleanup);
+      document.body.style.cursor = previousCursor;
+      document.body.style.userSelect = previousUserSelect;
+      if (resizeCleanupRef.current === cleanup) resizeCleanupRef.current = null;
+    };
+
+    resizeCleanupRef.current = cleanup;
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", cleanup);
+    window.addEventListener("pointercancel", cleanup);
+    window.addEventListener("blur", cleanup);
+  }, [
+    bottomPanelHeight,
+    displayedExplorerWidth,
+    displayedNovaPanelWidth,
+    roadmapHeight,
+    splitRatio,
+    showExplorer,
+    showNovaPanel,
+  ]);
+
+  useEffect(() => () => resizeCleanupRef.current?.(), []);
+
   // Nova AI Chat & Code Proposals State
-  const [appliedProposals, setAppliedProposals] = useState<Set<string>>(new Set());
+  const [proposalStatuses, setProposalStatuses] = useState<Record<string, ProposalStatus>>({});
+  const [proposalBases, setProposalBases] = useState<Record<string, string | null>>({});
+  const [proposalBaseErrors, setProposalBaseErrors] = useState<Record<string, string>>({});
+  const [proposalPlanSteps, setProposalPlanSteps] = useState<Record<string, string>>({});
+  const [applyingProposal, setApplyingProposal] = useState<string | null>(null);
+  const [novaMode, setNovaMode] = useState<NovaMode>("UNDERSTAND");
+  const [saveError, setSaveError] = useState<string | null>(null);
   const [novaMessages, setNovaMessages] = useState<Array<{ role: "user" | "assistant"; content: string }>>([
     {
       role: "assistant",
-      content: `Welcome to **${workspace.productName}** in BuildOS!\n\nI'm Nova — your AI product coding mentor. I'm loading your journey blueprint from Phases 1 through 4...`,
+      content: `Welcome to **${workspace.productName}**. I'm Nova, your AI build mentor. Ask me about your current task, or choose Plan, Build, Understand, or Debug to get started.`,
     },
   ]);
+  const [novaConversationId, setNovaConversationId] = useState<string | null>(null);
+  const [novaConversationReadyFor, setNovaConversationReadyFor] = useState<string | null>(null);
+  const [implementationPlan, setImplementationPlan] = useState<NovaImplementationPlan | null>(null);
+  const novaConversationReady = novaConversationReadyFor === problemId;
   const [novaInput, setNovaInput] = useState("");
   const [novaLoading, setNovaLoading] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+
+    async function loadConversation() {
+      try {
+        const response = await fetch(`/api/nova/chat?problemId=${encodeURIComponent(problemId)}`);
+        const data = await response.json();
+        if (!response.ok || !data?.ok || typeof data.conversationId !== "string" || !Array.isArray(data.messages)) {
+          throw new Error(data?.error || "Could not load Nova conversation.");
+        }
+        if (!active) return;
+        setNovaConversationId(data.conversationId);
+        setImplementationPlan(
+          data.implementationPlan && typeof data.implementationPlan === "object"
+            ? data.implementationPlan as NovaImplementationPlan
+            : null
+        );
+        if (data.messages.length > 0) {
+          setNovaMessages(data.messages
+            .filter((message: unknown) =>
+              Boolean(
+                message &&
+                typeof message === "object" &&
+                ["user", "assistant"].includes((message as { role?: string }).role || "") &&
+                typeof (message as { content?: unknown }).content === "string"
+              )
+            )
+            .map((message: { role: "user" | "assistant"; content: string }) => ({
+              role: message.role,
+              content: message.content,
+            })));
+        } else {
+          setNovaMessages([{
+            role: "assistant",
+            content: `Welcome to **${workspace.productName}**. I'm Nova, your AI build mentor. Ask me about your current task, or choose Plan, Build, Understand, or Debug to get started.`,
+          }]);
+        }
+      } catch (error) {
+        if (!active) return;
+        console.error("[BuildOS] Could not restore Nova conversation.", error);
+        setNovaConversationId(null);
+        setNovaMessages([{
+          role: "assistant",
+          content: `Welcome to **${workspace.productName}**. I'm Nova, your AI build mentor. Ask me about your current task, or choose Plan, Build, Understand, or Debug to get started.`,
+        }]);
+      } finally {
+        if (active) setNovaConversationReadyFor(problemId);
+      }
+    }
+
+    void loadConversation();
+    return () => {
+      active = false;
+    };
+  }, [problemId, workspace.productName]);
 
   // Fetch full journey data (Phases 1-4) on mount
   useEffect(() => {
@@ -226,57 +734,29 @@ export default function BuildOS({ problemId, productName: propName, problemData,
   // Personalize Nova initial greeting once journey blueprint is loaded
   const hasPersonalizedGreeting = useRef(false);
   useEffect(() => {
+    if (!novaConversationReady) return;
     if (!journeyPhases && journeyLoading) return;
     if (hasPersonalizedGreeting.current) return;
     hasPersonalizedGreeting.current = true;
 
-    const design = journeyPhases?.design || {};
-    const plan = journeyPhases?.plan || {};
-    const sketches = Array.isArray(design.sketches) ? design.sketches : [];
-    const validSketches = sketches.filter((s: any) => s.imageUrl);
-    const techStack = plan.techDecisions ? Object.values(plan.techDecisions).filter(Boolean).join(", ") : "";
-    const goal = design.productGoal || problemData?.title || workspace.productName;
+    const welcome = {
+      role: "assistant" as const,
+      content: buildMode === "guided"
+        ? `I'm here to help you learn as you build. I'll explain concepts, offer hints, and help debug without skipping the work you're here to practice.`
+        : buildMode === "assisted"
+          ? `You lead the implementation, and I'll help with architecture, debugging, and focused code proposals when useful.`
+          : `You own the implementation. I'll help review your approach, uncover edge cases, and discuss trade-offs.`,
+    };
+    setNovaMessages((messages) =>
+      messages.length === 1 && messages[0].role === "assistant" ? [welcome] : messages
+    );
+  }, [journeyPhases, journeyLoading, buildMode, novaConversationReady]);
 
-    let greeting = `Welcome to **${workspace.productName}** in BuildOS! 🚀\n\n`;
-    greeting += `I've loaded your entire blueprint from Phase 1 through Phase 4:\n`;
-    greeting += `• **Product Goal:** ${goal}\n`;
-    if (design.selectedUsers?.length || design.customUserRole) {
-      greeting += `• **Target Persona:** ${design.selectedUsers?.join(", ") || design.customUserRole}\n`;
-    }
-    if (validSketches.length > 0) {
-      greeting += `• **Uploaded Mockups:** ${validSketches.length} screen designs linked (${validSketches.map((s: any) => s.screenName || "Screen").join(", ")})\n`;
-    }
-    if (techStack) {
-      greeting += `• **Tech Stack Chosen:** ${techStack}\n`;
-    }
-    if (plan.modules?.length) {
-      greeting += `• **Planned Modules:** ${plan.modules.map((m: any) => m.name || m.title).join(", ")}\n`;
-    }
-
-    greeting += `\n---\n`;
-
-    if (buildMode === "guided") {
-      greeting += `📚 **Guided Build Mode** — Your job is to build this product. My job is to help you learn.\n\nI will:\n✓ Explain concepts when you're confused\n✓ Give hints to point you in the right direction\n✓ Show small focused examples you can learn from\n✓ Help you debug specific errors\n\nI will not automatically write entire features for you — that would skip the learning. **Start with Mission 01** and ask me to explain anything you don't understand yet.`;
-    } else if (buildMode === "assisted") {
-      greeting += `🔧 **Assisted Build Mode** — You own most of the implementation. I help when you're genuinely stuck.\n\nAsk me for: architecture advice, TypeScript types, debugging help, code review.\nBefore I write code for you — tell me what you've tried first.`;
-    } else {
-      greeting += `🚀 **Independent Build Mode** — You build. I review.\n\nShare your approach, architecture decisions, and code with me. I'll challenge your assumptions, identify edge cases, and review trade-offs. The implementation is yours.`;
-    }
-
-    setNovaMessages([
-      {
-        role: "assistant",
-        content: greeting,
-      },
-    ]);
-  }, [journeyPhases, journeyLoading, buildMode, workspace.productName, problemData?.title]);
-
-  const parseNovaProposals = useCallback((text: string) => {
+  const parseNovaProposals = useCallback((text: string, messageIndex = 0) => {
     if (!text) return [];
     const proposals: Array<{ id: string; filePath: string; code: string }> = [];
     const regex = /```(?:tsx|jsx|typescript|javascript|ts|js)?[\r\n]+([\s\S]*?)```/g;
     let match;
-    let idx = 0;
     while ((match = regex.exec(text)) !== null) {
       const rawCode = match[1] || "";
       const fileHeaderMatch = rawCode.match(/(?:\/\/|\/\*)\s*FILE:\s*([^\r\n]+)/i);
@@ -289,19 +769,160 @@ export default function BuildOS({ problemId, productName: propName, problemData,
       }
 
       if (filePath && rawCode.trim().length > 10) {
-        idx++;
         proposals.push({
-          id: `prop-${idx}-${filePath.replace(/[^a-zA-Z0-9]/g, "_")}`,
+          id: stableProposalId(
+            novaConversationId || "unplanned",
+            String(messageIndex),
+            filePath,
+            rawCode
+          ),
           filePath,
-          code: rawCode.trim(),
+          code: rawCode
+            .replace(/^\s*(?:\/\/|\/\*)\s*FILE:\s*[^\r\n]+\r?\n/i, "")
+            .trim(),
         });
       }
     }
-    return proposals;
+    return implementationPlan ? proposals.slice(0, 1) : proposals;
+  }, [implementationPlan, novaConversationId]);
+
+  useEffect(() => {
+    const step = implementationPlan?.steps.find(
+      (candidate) => candidate.id === implementationPlan.currentStepId
+    );
+    if (!step?.proposalId) return;
+    for (const [messageIndex, message] of novaMessages.entries()) {
+      if (message.role !== "assistant") continue;
+      const proposal = parseNovaProposals(message.content, messageIndex)
+        .find((candidate) => candidate.id === step.proposalId);
+      if (proposal) {
+        setProposalPlanSteps((previous) =>
+          previous[proposal.id] === step.id
+            ? previous
+            : { ...previous, [proposal.id]: step.id }
+        );
+        setProposalStatuses((previous) =>
+          previous[proposal.id]
+            ? previous
+            : {
+                ...previous,
+                [proposal.id]: ["executing", "completed", "validation_failed"].includes(step.status)
+                  ? "applied"
+                  : "pending",
+              }
+        );
+        break;
+      }
+    }
+  }, [implementationPlan, novaMessages, parseNovaProposals]);
+
+  const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const previewRef = useRef<HTMLIFrameElement>(null);
+  const chatScrollRef = useRef<HTMLDivElement>(null);
+  const shouldAutoScrollChatRef = useRef(true);
+
+  useEffect(() => {
+    if (!shouldAutoScrollChatRef.current) return;
+    const frame = window.requestAnimationFrame(() => {
+      const container = chatScrollRef.current;
+      if (container) container.scrollTo({ top: container.scrollHeight, behavior: "smooth" });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [novaMessages, novaLoading]);
+
+  const activeMission: BuildMission = workspace.missions[activeMissionIndex] || workspace.missions[0];
+  const activeNovaConversationId = novaConversationReady ? novaConversationId : null;
+  const displayedNovaMessages = novaConversationReady
+    ? novaMessages
+    : [{
+        role: "assistant" as const,
+        content: `Welcome to **${workspace.productName}**. I'm Nova, your AI build mentor. Ask me about your current task, or choose Plan, Build, Understand, or Debug to get started.`,
+      }];
+  const roadmapPhases = useMemo(
+    () => ROADMAP_PHASES.map((phaseDefinition, phaseIndex) => ({
+      ...phaseDefinition,
+      index: phaseIndex,
+      missions: workspace.missions
+        .map((mission, missionIndex) => ({ mission, missionIndex }))
+        .filter(({ mission }) => getRoadmapPhaseIndex(mission) === phaseIndex),
+    })),
+    [workspace.missions]
+  );
+  const activeRoadmapPhaseIndex = Math.max(
+    0,
+    roadmapPhases.findIndex(({ missions }) => missions.some(({ missionIndex }) => missionIndex === activeMissionIndex))
+  );
+  const completedMissionCount = completedSteps.filter((id) => workspace.missions.some((mission) => mission.id === id)).length;
+
+  const pushLog = useCallback((line: string) => {
+    setLogs((prev) => [...prev.slice(-80), line]);
   }, []);
 
-  const applyNovaProposal = async (proposal: { id: string; filePath: string; code: string }) => {
+  const saveFile = useCallback(async () => {
+    setSaving(true);
+    setSaveError(null);
     try {
+      const res = await fetch("/api/buildos/files", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ userId, problemId, path: activePath, content }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Save failed");
+      if (latestEditorContent.current === content) setDirty(false);
+      pushLog(`Saved ${activePath}`);
+      return true;
+    } catch (err: any) {
+      const message = err.message || "Save failed";
+      setSaveError(message);
+      pushLog(`Save failed: ${message}`);
+      return false;
+    } finally {
+      setSaving(false);
+    }
+  }, [userId, problemId, activePath, content, pushLog]);
+
+  const persistImplementationStatus = async (
+    stepId: string,
+    status: ImplementationStepStatus,
+    proposal?: { id: string; content?: string }
+  ) => {
+    if (!activeNovaConversationId) throw new Error("Nova conversation is not ready.");
+    const response = await fetch("/api/nova/implementation", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        problemId,
+        conversationId: activeNovaConversationId,
+        stepId,
+        status,
+        proposalId: proposal?.id,
+        proposalContent: proposal?.content,
+      }),
+    });
+    const data = await response.json();
+    if (!response.ok || !data.ok) {
+      throw new Error(data.error || "Could not save implementation progress.");
+    }
+    setImplementationPlan(data.implementationPlan);
+  };
+
+  const applyNovaProposal = async (proposal: { id: string; filePath: string; code: string }) => {
+    const proposedAgainst = proposalBases[proposal.id];
+    if (proposedAgainst === undefined || proposalBaseErrors[proposal.id]) return;
+    if (activePath === proposal.filePath && content !== proposedAgainst) {
+      alert("This file changed after Nova prepared the proposal. Ask Nova for a revision before applying it.");
+      return;
+    }
+    if (dirty && !(await saveFile())) return;
+
+    setApplyingProposal(proposal.id);
+    try {
+      const stepId = proposalPlanSteps[proposal.id];
+      if (stepId) {
+        await persistImplementationStatus(stepId, "approved", { id: proposal.id });
+        await persistImplementationStatus(stepId, "executing", { id: proposal.id });
+      }
       const res = await fetch("/api/buildos/files", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
@@ -310,6 +931,14 @@ export default function BuildOS({ problemId, productName: propName, problemData,
           problemId,
           path: proposal.filePath,
           content: proposal.code,
+          source: "nova_approved",
+          ...(stepId ? {
+            implementation: {
+              conversationId: activeNovaConversationId,
+              stepId,
+              proposalId: proposal.id,
+            },
+          } : {}),
         }),
       });
       const data = await res.json();
@@ -322,9 +951,11 @@ export default function BuildOS({ problemId, productName: propName, problemData,
         setOpenTabs((prev) => [...prev, proposal.filePath]);
       }
       setActivePath(proposal.filePath);
-      setContent(proposal.code);
+      updateEditorContent(proposal.code);
+      setDirty(false);
 
-      setAppliedProposals((prev) => new Set(prev).add(proposal.id));
+      setProposalStatuses((prev) => ({ ...prev, [proposal.id]: "applied" }));
+      setSaveError(null);
 
       const treeRes = await fetch(
         `/api/buildos/files?userId=${encodeURIComponent(userId)}&problemId=${encodeURIComponent(problemId)}`
@@ -335,22 +966,15 @@ export default function BuildOS({ problemId, productName: propName, problemData,
       }
 
       setLogs((prev) => [...prev, `[${new Date().toLocaleTimeString()}] ✓ Applied Nova code proposal to ${proposal.filePath}`]);
-    } catch (err: any) {
-      alert(`Failed to apply proposal: ${err.message}`);
+    } catch (err) {
+      alert(`Failed to apply proposal: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setApplyingProposal(null);
     }
   };
 
-  const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const previewRef = useRef<HTMLIFrameElement>(null);
-  const chatBottomRef = useRef<HTMLDivElement>(null);
-
-  const activeMission: BuildMission = workspace.missions[activeMissionIndex] || workspace.missions[0];
-
-  const pushLog = useCallback((line: string) => {
-    setLogs((prev) => [...prev.slice(-80), line]);
-  }, []);
-
   const activeRunIdRef = useRef<number>(0);
+  const activeRunTaskIdRef = useRef<number>(activeMission.id);
 
   // Controlled, deterministic Run handler (MUST NOT BE CALLED AUTOMATICALLY)
   const runProject = useCallback(async () => {
@@ -361,25 +985,21 @@ export default function BuildOS({ problemId, productName: propName, problemData,
 
     const currentRunId = Date.now();
     activeRunIdRef.current = currentRunId;
+    activeRunTaskIdRef.current = activeMission.id;
 
     setRuntimeState("SAVING");
     setRunError(null);
     setLogs((prev) => [...prev.filter((l) => !l.startsWith("✓") && !l.startsWith("Error:") && !l.startsWith("Build failed")), `--- Run Execution ---`, "Saving workspace files..."]);
 
-    // 1. Force save active file in editor to disk FIRST
-    let currentWorkspaceFiles: Record<string, string> = {};
-    try {
-      if (activePath && content !== undefined) {
-        currentWorkspaceFiles[activePath] = content;
-        await fetch("/api/buildos/files", {
-          method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ userId, problemId, path: activePath, content }),
-        });
-        setDirty(false);
+    // Save the active file before running; do not report a run after a failed save.
+    const currentWorkspaceFiles: Record<string, string> = {};
+    if (activePath && content !== undefined) {
+      if (dirty && !(await saveFile())) {
+        setRuntimeState("FAILED");
+        setRunError("Could not save the active file. Resolve the save error before running.");
+        return;
       }
-    } catch (err: any) {
-      console.warn("Save before run failed:", err);
+      currentWorkspaceFiles[activePath] = content;
     }
 
     setRuntimeState("STARTING");
@@ -392,6 +1012,7 @@ export default function BuildOS({ problemId, productName: propName, problemData,
         body: JSON.stringify({
           userId,
           problemId,
+          taskId: activeMission.id,
           runId: currentRunId,
           files: currentWorkspaceFiles,
         }),
@@ -402,6 +1023,7 @@ export default function BuildOS({ problemId, productName: propName, problemData,
 
       if (!data.ok) {
         setRuntimeState("FAILED");
+        setActiveConsoleTab("problems");
         setRunError(data.error || "Build failed");
         pushLog(data.error || "Build failed");
         return;
@@ -409,21 +1031,23 @@ export default function BuildOS({ problemId, productName: propName, problemData,
 
       setPreviewHtml(data.previewHtml);
       setPreviewKey(Date.now());
-      setRuntimeState("RUNNING");
+      setRuntimeState("STARTING");
       (data.logs || []).forEach((l: string) => pushLog(l));
     } catch (err: any) {
       if (activeRunIdRef.current !== currentRunId) return;
       setRuntimeState("FAILED");
+      setActiveConsoleTab("problems");
       setRunError(err.message || String(err));
       pushLog(err.message || String(err));
     }
-  }, [userId, problemId, activePath, content, runtimeState, workspaceId, pushLog]);
+  }, [userId, problemId, activePath, activeMission.id, content, dirty, runtimeState, pushLog, saveFile]);
 
   // Handle postMessage events from preview iframe sandbox
   useEffect(() => {
     const handlePreviewMessage = (event: MessageEvent) => {
       const data = event.data;
       if (!data || data.source !== "makemistakes-buildos-preview") return;
+      if (!previewRef.current || event.source !== previewRef.current.contentWindow) return;
 
       // Filter out stale events from previous run executions
       if (data.runId && activeRunIdRef.current > 0 && String(data.runId) !== String(activeRunIdRef.current)) return;
@@ -432,19 +1056,45 @@ export default function BuildOS({ problemId, productName: propName, problemData,
         setRuntimeState("RUNNING");
         pushLog("✓ Project running");
         pushLog("✓ Preview ready");
+        void fetch("/api/nova/activity", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            problemId,
+            taskId: activeRunTaskIdRef.current,
+            type: "preview_ready",
+            runId: String(data.runId || ""),
+          }),
+        }).then(async (response) => {
+          if (!response.ok) console.warn("[BuildOS] Could not persist preview-ready history.");
+        }).catch((error) => console.warn("[BuildOS] Could not persist preview-ready history.", error));
       } else if (data.type === "error") {
         setRuntimeState("FAILED");
+        setActiveConsoleTab("problems");
         const name = data.name || "RuntimeError";
         const msg = data.message || "An unhandled JavaScript exception occurred in preview.";
         const fullErr = `Runtime Error (${name}): ${msg}`;
         setRunError(fullErr);
         pushLog(`Error: ${fullErr}`);
+        void fetch("/api/nova/activity", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            problemId,
+            taskId: activeRunTaskIdRef.current,
+            type: "runtime_error",
+            runId: String(data.runId || ""),
+            error: fullErr,
+          }),
+        }).then(async (response) => {
+          if (!response.ok) console.warn("[BuildOS] Could not persist preview runtime error.");
+        }).catch((error) => console.warn("[BuildOS] Could not persist preview runtime error.", error));
       }
     };
 
     window.addEventListener("message", handlePreviewMessage);
     return () => window.removeEventListener("message", handlePreviewMessage);
-  }, [pushLog]);
+  }, [problemId, pushLog, workspace.missions]);
 
   const ensure = useCallback(async () => {
     setPhase("booting");
@@ -458,9 +1108,7 @@ export default function BuildOS({ problemId, productName: propName, problemData,
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Workspace failed");
 
-      setChecks(data.checks);
       setTree(data.tree || []);
-      setWorkspaceId(data.workspace?.workspaceId || null);
       for (const l of data.logs || []) {
         const line = String(l).trim();
         if (line) pushLog(line);
@@ -476,8 +1124,77 @@ export default function BuildOS({ problemId, productName: propName, problemData,
       setPhase("ready");
       onReadyChange?.(true);
 
-      // Load active step (Step 1: App shell) relevant code immediately
-      await loadStepFiles(0);
+      let initialMissionIndex = 0;
+      let restoredActiveTask = false;
+      let restoredCompletedIds: number[] = [];
+      try {
+        const progressResponse = await fetch(
+          `/api/nova/activity?problemId=${encodeURIComponent(problemId)}`
+        );
+        const progress = await progressResponse.json();
+        if (!progressResponse.ok || !progress.ok) {
+          throw new Error(progress.error || "Could not restore task progress.");
+        }
+
+        const completedIds = Array.isArray(progress.completedTaskIds)
+          ? progress.completedTaskIds.filter((id: unknown): id is number =>
+              Number.isInteger(id) && workspace.missions.some((mission) => mission.id === id)
+            )
+          : [];
+        restoredCompletedIds = completedIds;
+        setCompletedSteps(completedIds);
+        setDependencyBlockedSteps(
+          Array.isArray(progress.dependencyBlockedTaskIds)
+            ? progress.dependencyBlockedTaskIds.filter((id: unknown): id is number =>
+                Number.isInteger(id) && workspace.missions.some((mission) => mission.id === id)
+              )
+            : []
+        );
+
+        const selectedIndex = workspace.missions.findIndex((mission) =>
+          mission.id === progress.activeTaskId && !completedIds.includes(mission.id)
+        );
+        if (selectedIndex >= 0) {
+          initialMissionIndex = selectedIndex;
+          restoredActiveTask = true;
+        } else {
+          const nextIndex = workspace.missions.findIndex((mission) =>
+            mission.id === progress.nextTaskId
+          );
+          if (nextIndex >= 0) {
+            initialMissionIndex = nextIndex;
+          } else if (completedIds.length === workspace.missions.length) {
+            initialMissionIndex = workspace.missions.length - 1;
+          }
+        }
+      } catch (error) {
+        console.warn("[BuildOS] Could not restore persisted task progress.", error);
+        pushLog("Could not restore saved task progress. Showing the first available task.");
+      }
+
+      setActiveMissionIndex(initialMissionIndex);
+      await loadStepFiles(initialMissionIndex);
+      if (
+        !restoredActiveTask &&
+        workspace.missions[initialMissionIndex] &&
+        !restoredCompletedIds.includes(workspace.missions[initialMissionIndex].id)
+      ) {
+        try {
+          const response = await fetch("/api/nova/activity", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              problemId,
+              taskId: workspace.missions[initialMissionIndex].id,
+              type: "task_started",
+            }),
+          });
+          if (!response.ok) throw new Error("Could not persist the active BuildOS task.");
+        } catch (error) {
+          console.warn("[BuildOS] Could not persist the active task.", error);
+          pushLog("The selected task could not be saved; Nova may report the active task as unknown.");
+        }
+      }
 
       // STRICT REQUIREMENT: DO NOT CALL runProject() AUTOMATICALLY!
     } catch (err: any) {
@@ -488,9 +1205,9 @@ export default function BuildOS({ problemId, productName: propName, problemData,
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [userId, problemId]);
 
-  const openFile = async (filePath: string, skipDirtyCheck = false) => {
-    if (!skipDirtyCheck && dirty) {
-      await saveFile();
+  async function openFile(filePath: string, skipDirtyCheck = false) {
+    if (!skipDirtyCheck && dirty && !(await saveFile())) {
+      return;
     }
     const res = await fetch(
       `/api/buildos/files?userId=${encodeURIComponent(userId)}&problemId=${encodeURIComponent(problemId)}&path=${encodeURIComponent(filePath)}`
@@ -501,10 +1218,10 @@ export default function BuildOS({ problemId, productName: propName, problemData,
       return;
     }
     setActivePath(filePath);
-    setContent(data.content || "");
+    updateEditorContent(data.content || "");
     setDirty(false);
     setOpenTabs((prev) => (prev.includes(filePath) ? prev : [...prev, filePath]));
-  };
+  }
 
   const closeTab = (path: string, e: React.MouseEvent) => {
     e.stopPropagation();
@@ -515,30 +1232,12 @@ export default function BuildOS({ problemId, productName: propName, problemData,
     }
   };
 
-  const saveFile = async () => {
-    setSaving(true);
-    try {
-      const res = await fetch("/api/buildos/files", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ userId, problemId, path: activePath, content }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Save failed");
-      setDirty(false);
-      pushLog(`Saved ${activePath}`);
-    } catch (err: any) {
-      pushLog(err.message || "Save failed");
-    } finally {
-      setSaving(false);
-    }
-  };
   const activeMissionIndexRef = useRef(activeMissionIndex);
   useEffect(() => {
     activeMissionIndexRef.current = activeMissionIndex;
   }, [activeMissionIndex]);
 
-  const loadStepFiles = async (stepIdx: number) => {
+  async function loadStepFiles(stepIdx: number) {
     const mission = workspace.missions[stepIdx];
     const mainFile = mission?.files && mission.files[0] ? mission.files[0] : "app/page.tsx";
     const targetMainFile =
@@ -549,10 +1248,32 @@ export default function BuildOS({ problemId, productName: propName, problemData,
         : `app/${mainFile}`;
 
     await openFile(targetMainFile, true);
-  };
+  }
 
   const handleSelectStep = async (idx: number) => {
-    if (dirty) await saveFile();
+    if (dirty && !(await saveFile())) return;
+    const selectedMission = workspace.missions[idx];
+    if (!selectedMission) return;
+    try {
+      const response = await fetch("/api/nova/activity", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          problemId,
+          taskId: selectedMission.id,
+          type: "task_started",
+        }),
+      });
+      if (response.status === 409) {
+        const data = await response.json();
+        pushLog(data.error || "Complete the prerequisite tasks before selecting this task.");
+        return;
+      }
+      if (!response.ok) throw new Error("Could not persist the selected task.");
+    } catch (error) {
+      console.warn("[BuildOS] Could not persist the selected task.", error);
+      pushLog("The selected task could not be saved; Nova may report the active task as unknown.");
+    }
     setActiveMissionIndex(idx);
     setValidationResult(null);
     await loadStepFiles(idx);
@@ -597,19 +1318,77 @@ export default function BuildOS({ problemId, productName: propName, problemData,
   };
 
   const handleValidateStep = async () => {
-    if (dirty) await saveFile();
+    if (dirty && !(await saveFile())) return;
 
-    const check = validateMissionCode({
+    let check = validateMissionCode({
       mission: activeMission,
       files: { [activePath]: content },
       hasRun: runtimeState === "RUNNING" || Boolean(previewHtml),
     });
 
+    if (check.ok) {
+      try {
+        const response = await fetch("/api/nova/activity", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ problemId, taskId: activeMission.id, type: "task_completed" }),
+        });
+        const data = await response.json();
+        if (!response.ok || !data.ok) {
+          check = {
+            ok: false,
+            failures: data.validation?.failures || [data.error || "Could not verify task completion against the saved workspace."],
+          };
+        }
+      } catch {
+        check = { ok: false, failures: ["Could not save verified task progress. Check your connection and try again."] };
+      }
+    }
+
     setValidationResult(check);
+    const currentImplementationStep = implementationPlan?.steps.find(
+      (step) => step.id === implementationPlan.currentStepId
+    );
+    if (
+      currentImplementationStep &&
+      ["executing", "validation_failed"].includes(currentImplementationStep.status)
+    ) {
+      try {
+        await persistImplementationStatus(
+          currentImplementationStep.id,
+          check.ok ? "completed" : "validation_failed",
+          currentImplementationStep.proposalId
+            ? { id: currentImplementationStep.proposalId }
+            : undefined
+        );
+      } catch (error) {
+        console.error("[BuildOS] Could not persist implementation validation.", error);
+        pushLog("Could not save implementation validation status.");
+      }
+    }
 
     if (check.ok) {
       if (!completedSteps.includes(activeMission.id)) {
         setCompletedSteps((prev) => [...prev, activeMission.id]);
+      }
+      try {
+        const progressResponse = await fetch(
+          `/api/nova/activity?problemId=${encodeURIComponent(problemId)}`
+        );
+        const progress = await progressResponse.json();
+        if (!progressResponse.ok || !progress.ok) {
+          throw new Error(progress.error || "Could not refresh task dependencies.");
+        }
+        setDependencyBlockedSteps(
+          Array.isArray(progress.dependencyBlockedTaskIds)
+            ? progress.dependencyBlockedTaskIds.filter((id: unknown): id is number =>
+                Number.isInteger(id) && workspace.missions.some((mission) => mission.id === id)
+              )
+            : []
+        );
+      } catch (error) {
+        console.warn("[BuildOS] Could not refresh task dependency state.", error);
+        pushLog("Could not refresh prerequisite state. Reload BuildOS to update task availability.");
       }
       if (activeMissionIndex < workspace.missions.length - 1) {
         const nextIdx = activeMissionIndex + 1;
@@ -620,10 +1399,34 @@ export default function BuildOS({ problemId, productName: propName, problemData,
     }
   };
 
-  const sendNovaMessage = async (textToSend?: string) => {
-    const query = textToSend || novaInput;
-    if (!query.trim() || novaLoading) return;
+  const rejectNovaProposal = (filePath: string, proposalId: string) => {
+    setProposalStatuses((previous) => ({ ...previous, [proposalId]: "rejected" }));
+    const stepId = proposalPlanSteps[proposalId];
+    if (stepId) {
+      void persistImplementationStatus(stepId, "rejected", { id: proposalId }).catch((error) => {
+        console.error("[BuildOS] Could not persist implementation proposal rejection.", error);
+        pushLog("Could not save Nova proposal rejection.");
+      });
+    }
+    void fetch("/api/nova/activity", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        problemId,
+        taskId: activeMission.id,
+        type: "proposal_rejected",
+        filePath,
+      }),
+    }).then((response) => {
+      if (!response.ok) console.warn("[BuildOS] Could not persist Nova proposal rejection.");
+    }).catch((error) => console.warn("[BuildOS] Could not persist Nova proposal rejection.", error));
+  };
 
+  const sendNovaMessage = async (textToSend?: string, modeOverride: NovaMode = novaMode) => {
+    const query = textToSend || novaInput;
+    if (!query.trim() || novaLoading || !novaConversationReady) return;
+
+    shouldAutoScrollChatRef.current = true;
     const userMsg = { role: "user" as const, content: query.trim() };
     setNovaMessages((prev) => [...prev, userMsg]);
     if (!textToSend) setNovaInput("");
@@ -634,24 +1437,20 @@ export default function BuildOS({ problemId, productName: propName, problemData,
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          messages: [...novaMessages, userMsg],
+          message: userMsg.content,
+          conversationId: activeNovaConversationId,
           context: {
-            productName,
-            statement: workspace.statement,
-            problemStatement: problemData?.title || workspace.statement,
-            problemDescription: problemData?.problemStatement || (problemData as any)?.description || "",
-            category: workspace.category,
-            difficulty,
-            buildMode,
-            taskOwnership: activeMission.ownership,
-            missionTitle: activeMission.title,
-            buildObjective: activeMission.whatThisMeans || "",
+            problemId,
+            activeTaskId: activeMission.id,
             activeFile: activePath,
-            fileCode: content,
-            discover: journeyPhases?.discover || null,
-            research: journeyPhases?.research || null,
-            design: journeyPhases?.design || null,
-            plan: journeyPhases?.plan || null,
+            mentorMode: modeOverride,
+            execution: {
+              runtimeState,
+              previewError: runError,
+              saveError,
+              validationResult: validationResult?.failures || [],
+              logs: logs.slice(-16),
+            },
           },
         }),
       });
@@ -664,7 +1463,56 @@ export default function BuildOS({ problemId, productName: propName, problemData,
       }
 
       if (res.ok && data?.ok && data.message) {
+        if (typeof data.conversationId === "string") setNovaConversationId(data.conversationId);
+        const responsePlan = data.implementationPlan && typeof data.implementationPlan === "object"
+          ? data.implementationPlan as NovaImplementationPlan
+          : null;
+        if (responsePlan) setImplementationPlan(responsePlan);
         setNovaMessages((prev) => [...prev, { role: "assistant", content: data.message }]);
+        const proposals = parseNovaProposals(data.message, novaMessages.length + 1);
+        const proposalPlan = responsePlan || implementationPlan;
+        const proposalStepId = proposalPlan?.currentStepId;
+        for (const proposal of proposals) {
+          setProposalStatuses((prev) => ({ ...prev, [proposal.id]: "pending" }));
+          if (proposalStepId) {
+            setProposalPlanSteps((prev) => ({ ...prev, [proposal.id]: proposalStepId }));
+          }
+        }
+        if (proposalStepId && proposals.length > 0) {
+          try {
+            await persistImplementationStatus(proposalStepId, "awaiting_approval", {
+              id: proposals[0].id,
+              content: proposals[0].code,
+            });
+          } catch (error) {
+            console.error("[BuildOS] Could not register Nova proposal for approval.", error);
+            setProposalBaseErrors((prev) => ({
+              ...prev,
+              [proposals[0].id]: error instanceof Error ? error.message : "Could not register this proposal for approval.",
+            }));
+          }
+        }
+        await Promise.all(proposals.map(async (proposal) => {
+          if (!flattenFiles(tree).includes(proposal.filePath)) {
+            setProposalBases((prev) => ({ ...prev, [proposal.id]: null }));
+            return;
+          }
+          try {
+            const response = await fetch(
+              `/api/buildos/files?problemId=${encodeURIComponent(problemId)}&path=${encodeURIComponent(proposal.filePath)}`
+            );
+            if (response.ok) {
+              const file = await response.json();
+              setProposalBases((prev) => ({ ...prev, [proposal.id]: String(file.content ?? "") }));
+            } else if (response.status === 404) {
+              setProposalBases((prev) => ({ ...prev, [proposal.id]: null }));
+            } else {
+              setProposalBaseErrors((prev) => ({ ...prev, [proposal.id]: "Could not load the current file. Applying is disabled until the comparison is available." }));
+            }
+          } catch {
+            setProposalBaseErrors((prev) => ({ ...prev, [proposal.id]: "Could not load the current file. Applying is disabled until the comparison is available." }));
+          }
+        }));
       } else if (res.status === 504 || res.status === 408 || (!res.ok && !data)) {
         setNovaMessages((prev) => [
           ...prev,
@@ -690,7 +1538,6 @@ export default function BuildOS({ problemId, productName: propName, problemData,
       ]);
     } finally {
       setNovaLoading(false);
-      setTimeout(() => chatBottomRef.current?.scrollIntoView({ behavior: "smooth" }), 100);
     }
   };
 
@@ -701,8 +1548,9 @@ export default function BuildOS({ problemId, productName: propName, problemData,
   };
 
   useEffect(() => {
-    ensure();
+    const startTimer = window.setTimeout(ensure, 0);
     return () => {
+      window.clearTimeout(startTimer);
       fetch("/api/buildos/lifecycle", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -723,175 +1571,210 @@ export default function BuildOS({ problemId, productName: propName, problemData,
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [content, dirty]);
 
-  useEffect(() => {
-    function onMessage(event: MessageEvent) {
-      const data = event.data;
-      if (!data || data.source !== "makemistakes-buildos-preview") return;
-      if (data.type === "error") {
-        setRunError(String(data.message || "Preview error"));
-        setRuntimeState("FAILED");
-        pushLog(`Error: ${data.message}`);
-      } else if (data.type === "log") {
-        pushLog(String(data.message));
-      } else if (data.type === "ready") {
-        pushLog("✓ Preview ready");
-      }
-    }
-    window.addEventListener("message", onMessage);
-    return () => window.removeEventListener("message", onMessage);
-  }, [pushLog]);
-
   const isRunInProgress = runtimeState === "SAVING" || runtimeState === "STARTING";
 
+  useEffect(() => {
+    if (!previewHtml || runtimeState !== "STARTING") return;
+    const timer = window.setTimeout(() => {
+      setRuntimeState((current) => current === "STARTING" ? "FAILED" : current);
+      setRunError((current) => current || "Preview did not send a ready signal. Check the Console and try again.");
+    }, 15_000);
+    return () => window.clearTimeout(timer);
+  }, [previewHtml, previewKey, runtimeState]);
 
+  useEffect(() => {
+    const handleWorkspaceShortcut = (event: KeyboardEvent) => {
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "s") {
+        event.preventDefault();
+        if (dirty) void saveFile();
+      } else if ((event.ctrlKey || event.metaKey) && (event.key === "`" || event.key === "~")) {
+        event.preventDefault();
+        setBottomPanelOpen((open) => !open);
+      }
+    };
+
+    window.addEventListener("keydown", handleWorkspaceShortcut);
+    return () => window.removeEventListener("keydown", handleWorkspaceShortcut);
+  }, [dirty, saveFile]);
 
   return (
-    <div className="flex flex-col h-full w-full min-h-0 bg-[#07090e] text-zinc-100 font-sans select-none overflow-hidden">
-      {/* ==================== 1. TOP IDE HEADER BAR ==================== */}
-      <header className="flex items-center justify-between h-10 px-3 bg-[#0a0d14] border-b border-zinc-800/80 text-xs shrink-0 z-10">
-        {/* Left: Branding & Context */}
-        <div className="flex items-center gap-2.5">
+    <div className="buildos-shell relative flex h-full min-h-0 w-full flex-col select-none overflow-hidden bg-[#090B0A] font-sans text-[#F3F4F6]">
+      {/* ==================== GLOBAL WORKSPACE HEADER ==================== */}
+      <header className="z-10 flex h-[60px] shrink-0 items-center gap-2 border-b border-[#252D27] bg-[#101310] px-2 sm:px-4 text-xs">
+        <div className="flex min-w-0 flex-1 items-center gap-2 sm:gap-3">
           <button
             type="button"
-            onClick={() => setShowExplorer(!showExplorer)}
+            onClick={() => isDesktop
+              ? setDesktopExplorerOpen((open) => !open)
+              : setMobileExplorerOpen((open) => {
+                  if (!open) setMobileNovaPanelOpen(false);
+                  return !open;
+                })}
+            aria-label={showExplorer ? "Collapse project explorer" : "Open project explorer"}
+            aria-expanded={showExplorer}
+            aria-controls="buildos-explorer"
             className={`p-1.5 rounded transition-colors ${
-              showExplorer ? "bg-zinc-800 text-teal-400" : "text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/60"
+              showExplorer ? "bg-zinc-800 text-green-400" : "text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/60"
             }`}
-            title="Toggle Explorer Sidebar"
+            title="Toggle project explorer"
           >
             {showExplorer ? <PanelLeftClose className="h-4 w-4" /> : <PanelLeftOpen className="h-4 w-4" />}
           </button>
 
-          <div className="flex items-center gap-2">
-            <div className="flex items-center gap-1.5 px-2 py-0.5 rounded bg-teal-950/80 border border-teal-800/60 text-teal-300 font-bold text-[11px] tracking-wide">
-              <span className="h-1.5 w-1.5 rounded-full bg-teal-400 animate-pulse" />
+          <div className="flex min-w-0 items-center gap-2">
+            <div className="flex shrink-0 items-center gap-1.5 rounded border border-green-800/60 bg-green-950/80 px-2 py-1 text-[11px] font-bold tracking-wide text-green-300">
+              <span className="h-1.5 w-1.5 rounded-full bg-green-400 animate-pulse" />
               BuildOS
+              <span className="rounded border border-green-800/60 px-1 py-px text-[8px] uppercase tracking-wider text-green-400">Beta</span>
             </div>
-            <span className="text-zinc-600">/</span>
-            <span className="font-mono text-[11px] text-zinc-400 bg-zinc-900 px-1.5 py-0.5 rounded border border-zinc-800">
+            {onBackToJourney ? (
+              <button
+                type="button"
+                onClick={onBackToJourney}
+                className="hidden items-center gap-1 text-[11px] text-zinc-400 hover:text-green-300 sm:flex"
+              >
+                Journey
+              </button>
+            ) : (
+              <Link href="/dashboard/journey" className="hidden text-[11px] text-zinc-400 hover:text-green-300 sm:inline">
+                Journey
+              </Link>
+            )}
+            <span className="hidden text-zinc-700 sm:inline">/</span>
+            <span className="hidden shrink-0 rounded border border-zinc-800 bg-zinc-900 px-1.5 py-1 font-mono text-[10px] text-zinc-400 sm:inline">
               {problemId || "P000001"}
             </span>
-            <span className="font-semibold text-zinc-200 truncate max-w-[140px] hidden sm:inline">
-              {productName}
-            </span>
-          </div>
-
-          <div className="h-4 w-px bg-zinc-800 mx-0.5 hidden md:block" />
-
-          {/* Active Task Pill */}
-          <div className="hidden md:flex items-center gap-1.5 px-2 py-0.5 bg-zinc-900/90 border border-zinc-800 rounded text-[11px] text-zinc-300">
-            <span className="px-1.5 py-0.2 bg-teal-950 text-teal-400 font-mono text-[10px] font-bold rounded">
-              IDE Workspace
-            </span>
-            <span className="truncate max-w-[180px] font-medium">{productName} App</span>
+            <span className="max-w-[72px] truncate text-[11px] font-semibold text-zinc-200 sm:max-w-none">{productName}</span>
           </div>
         </div>
 
-        {/* Middle: Save Status & Runtime Indicator */}
-        <div className="flex items-center gap-3">
-          <div className="flex items-center gap-1.5 text-[11px] font-mono text-zinc-400">
-            <span
-              className={`h-2 w-2 rounded-full ${
-                saving
-                  ? "bg-amber-400 animate-ping"
-                  : dirty
-                  ? "bg-amber-400"
-                  : "bg-emerald-400"
-              }`}
-            />
-            <span>{saving ? "Saving..." : dirty ? "Unsaved" : "Saved"}</span>
+        <div className="hidden min-w-[220px] flex-1 flex-col items-center gap-1 lg:flex">
+          <div className="flex items-center gap-2 text-[10px] font-medium text-zinc-300">
+            <span>Phase {activeRoadmapPhaseIndex + 1} of 6</span>
+            <span className="text-zinc-600">—</span>
+            <span>{ROADMAP_PHASES[activeRoadmapPhaseIndex].name}</span>
+            <span className="font-mono text-zinc-500">{completedMissionCount}/{workspace.missions.length}</span>
           </div>
-
-          <div className="h-3.5 w-px bg-zinc-800" />
-
-          <div className="flex items-center gap-1.5 text-[11px]">
-            <span className="text-zinc-500">Status:</span>
-            <span
-              className={`px-2 py-0.5 rounded-full font-mono text-[10px] font-semibold ${
-                runtimeState === "RUNNING"
-                  ? "bg-emerald-950 text-emerald-300 border border-emerald-800/80"
-                  : runtimeState === "FAILED"
-                  ? "bg-rose-950 text-rose-300 border border-rose-800/80"
-                  : runtimeState === "STARTING" || runtimeState === "SAVING"
-                  ? "bg-amber-950 text-amber-300 border border-amber-800/80 animate-pulse"
-                  : "bg-zinc-900 text-zinc-400 border border-zinc-800"
-              }`}
-            >
-              {runtimeState === "RUNNING"
-                ? "Running ✓"
-                : runtimeState === "FAILED"
-                ? "Failed ✗"
-                : runtimeState === "STARTING"
-                ? "Compiling..."
-                : runtimeState === "SAVING"
-                ? "Saving..."
-                : "Ready"}
-            </span>
+          <div className="flex w-full max-w-[260px] gap-1" aria-label="Product roadmap progress">
+            {ROADMAP_PHASES.map((phaseDefinition, index) => {
+              const phase = roadmapPhases[index];
+              const complete = phase.missions.length > 0 && phase.missions.every(({ mission }) => completedSteps.includes(mission.id));
+              const current = index === activeRoadmapPhaseIndex;
+              return (
+                <span
+                  key={phaseDefinition.name}
+                  aria-hidden="true"
+                  className={`h-1 flex-1 rounded-full ${complete ? "bg-emerald-400" : current ? "bg-emerald-500/80" : "bg-zinc-700"}`}
+                />
+              );
+            })}
           </div>
         </div>
 
-        {/* Right: Actions (Save, Run, Nova Toggle) */}
-        <div className="flex items-center gap-2">
+        <div className="flex flex-1 items-center justify-end gap-1.5 sm:gap-2">
+          <div
+            title={saving ? "Saving workspace" : saveError ? "Workspace save failed" : dirty ? "Unsaved changes" : "Workspace saved"}
+            className={`flex shrink-0 items-center gap-1.5 text-[10px] font-mono ${saveError ? "text-rose-400" : dirty ? "text-amber-300" : "text-zinc-300"}`}
+            aria-live="polite"
+          >
+            <span className={`h-2 w-2 rounded-full ${saving ? "animate-ping bg-amber-400" : saveError ? "bg-rose-400" : dirty ? "bg-amber-400" : "bg-emerald-400"}`} />
+            <span className="hidden sm:inline">{saving ? "Saving…" : saveError ? "Save failed" : dirty ? "Unsaved" : "Saved"}</span>
+          </div>
           <button
             type="button"
             onClick={saveFile}
             disabled={saving || !dirty}
-            className="hidden sm:flex items-center gap-1 px-2.5 py-1 bg-zinc-900 hover:bg-zinc-800 text-zinc-300 border border-zinc-800 rounded text-xs transition-colors disabled:opacity-40"
+            className="hidden items-center gap-1 rounded border border-zinc-800 bg-zinc-900 px-2.5 py-1.5 text-xs text-zinc-300 transition-colors hover:bg-zinc-800 disabled:opacity-40 sm:flex"
           >
-            Save
+            {saveError ? "Retry save" : "Save"}
           </button>
 
           <button
             type="button"
             onClick={runProject}
             disabled={isRunInProgress}
-            className="flex items-center gap-1.5 px-3 py-1 bg-emerald-500 hover:bg-emerald-400 text-zinc-950 font-bold rounded text-xs transition-colors shadow-sm disabled:opacity-50"
+            className="flex items-center gap-1.5 rounded bg-emerald-500 px-2.5 py-1.5 text-xs font-bold text-zinc-950 shadow-sm transition-colors hover:bg-emerald-400 disabled:opacity-50 sm:px-3"
           >
             {isRunInProgress ? (
               <Loader2 className="h-3.5 w-3.5 animate-spin" />
             ) : (
               <Play className="h-3.5 w-3.5 fill-current" />
             )}
-            <span>{isRunInProgress ? "Running..." : runtimeState === "RUNNING" ? "Run Again" : "Run"}</span>
+            <span className="hidden min-[380px]:inline">{isRunInProgress ? "Running..." : runtimeState === "RUNNING" ? "Run Again" : "Run"}</span>
           </button>
 
 
+
+          {onComplete && (
+            <button
+              type="button"
+              onClick={onComplete}
+              aria-label="Continue to the next journey phase"
+              className="inline-flex items-center rounded border border-zinc-700 px-2 py-1.5 text-[11px] font-medium text-zinc-300 hover:bg-zinc-800 sm:px-2.5"
+            >
+              <span className="hidden min-[480px]:inline">Continue</span>
+              <span className="min-[480px]:hidden">→</span>
+            </button>
+          )}
 
           <button
             type="button"
-            onClick={() => setShowNovaPanel(!showNovaPanel)}
-            className={`flex items-center gap-1.5 px-2.5 py-1 rounded border text-xs font-medium transition-colors ${
+            onClick={() => isDesktop
+              ? setDesktopNovaPanelOpen((open) => !open)
+              : setMobileNovaPanelOpen((open) => {
+                  if (!open) setMobileExplorerOpen(false);
+                  return !open;
+                })}
+            aria-label={showNovaPanel ? "Collapse Nova mentor" : "Open Nova mentor"}
+            aria-expanded={showNovaPanel}
+            aria-controls="buildos-nova"
+            className={`flex items-center gap-1.5 rounded border px-2 py-1.5 text-xs font-medium transition-colors sm:px-2.5 ${
               showNovaPanel
-                ? "bg-teal-950 border-teal-800/80 text-teal-300"
+                ? "bg-green-950 border-green-800/80 text-green-300"
                 : "bg-zinc-900 border-zinc-800 text-zinc-400 hover:text-zinc-200"
             }`}
           >
-            <Sparkles className="h-3.5 w-3.5 text-teal-400" />
+            <Sparkles className="h-3.5 w-3.5 text-green-400" />
             <span className="hidden sm:inline">Nova AI</span>
           </button>
+          <Link
+            href="/dashboard/settings"
+            aria-label="Open profile and settings"
+            title="Profile and settings"
+            className="hidden rounded-full border border-zinc-700 bg-zinc-900 p-1.5 text-zinc-300 hover:border-green-700 hover:text-green-300 sm:inline-flex"
+          >
+            <UserRound className="h-4 w-4" />
+          </Link>
         </div>
       </header>
 
+      {saveError && (
+        <div role="alert" className="flex shrink-0 items-center justify-between gap-3 border-b border-rose-900/60 bg-rose-950/30 px-3 py-1.5 text-[11px] text-rose-200">
+          <span>Workspace save failed: {saveError}</span>
+          <button type="button" onClick={saveFile} className="shrink-0 underline underline-offset-2">Retry</button>
+        </div>
+      )}
+
       {/* ==================== BOOTING STATE ==================== */}
       {phase === "booting" && (
-        <div className="flex-1 flex flex-col items-center justify-center gap-3 p-8 bg-[#090b10]">
-          <Loader2 className="h-8 w-8 animate-spin text-teal-400" />
+        <div className="flex-1 flex flex-col items-center justify-center gap-3 p-8 bg-[#101310]">
+          <Loader2 className="h-8 w-8 animate-spin text-green-400" />
           <p className="text-sm font-semibold text-zinc-200">Initializing BuildOS IDE Workspace...</p>
           <p className="text-xs text-zinc-500 max-w-md text-center">
-            Node.js, Next.js, React 19, and TypeScript compiler are pre-configured in your private cloud sandbox.
+            Checking the existing workspace and preparing its files. Preview runs in a browser sandbox.
           </p>
         </div>
       )}
 
       {/* ==================== ERROR STATE ==================== */}
       {phase === "error" && (
-        <div className="flex-1 flex flex-col items-center justify-center gap-3 p-8 bg-[#090b10]">
+        <div className="flex-1 flex flex-col items-center justify-center gap-3 p-8 bg-[#101310]">
           <AlertTriangle className="h-8 w-8 text-amber-400" />
           <p className="text-sm text-zinc-200">BuildOS Workspace Initialization Failed</p>
           <button
             type="button"
             onClick={ensure}
-            className="rounded-lg bg-teal-700 px-4 py-2 text-xs font-semibold text-white hover:bg-teal-600"
+            className="rounded-lg bg-green-700 px-4 py-2 text-xs font-semibold text-white hover:bg-green-600"
           >
             Retry Workspace Setup
           </button>
@@ -900,107 +1783,219 @@ export default function BuildOS({ problemId, productName: propName, problemData,
 
       {/* ==================== MAIN IDE WORKSPACE AREA ==================== */}
       {phase === "ready" && (
-        <div className="flex-1 flex min-h-0 divide-x divide-zinc-800/80 overflow-hidden">
-          {/* ==================== 1. LEFT FILE EXPLORER SIDEBAR ==================== */}
+        <div ref={workspaceLayoutRef} className="relative flex min-h-0 flex-1 overflow-hidden">
+          {!isDesktop && (showExplorer || showNovaPanel) && (
+            <button
+              type="button"
+              aria-label="Close open workspace panel"
+              onClick={() => {
+                setMobileExplorerOpen(false);
+                setMobileNovaPanelOpen(false);
+              }}
+              className="absolute inset-0 z-10 bg-black/50 lg:hidden"
+            />
+          )}
+
+          {/* ==================== 1. LEFT ROADMAP AND PROJECT SIDEBAR ==================== */}
           {showExplorer && (
-            <aside className="w-[260px] shrink-0 flex flex-col bg-[#090b10] min-h-0 select-none border-r border-zinc-800/80">
-              {/* Explorer Header */}
-              <div className="flex items-center justify-between px-3 py-2 border-b border-zinc-800/80 text-xs font-semibold text-zinc-300">
-                <span className="uppercase tracking-wider text-[10px] text-zinc-400 font-mono">EXPLORER</span>
-                <div className="flex items-center gap-1.5">
+            <aside
+              id="buildos-explorer"
+              ref={explorerPanelRef}
+              className="absolute inset-y-0 left-0 z-20 flex w-[min(88vw,480px)] min-h-0 shrink-0 select-none flex-col border-r border-[#252D27] bg-[#101310] shadow-2xl lg:relative lg:inset-auto lg:z-auto lg:w-auto lg:shadow-none"
+              style={isDesktop ? { width: displayedExplorerWidth, flexBasis: displayedExplorerWidth } : undefined}
+            >
+              <section
+                className="flex min-h-0 flex-col border-b border-[#252D27]"
+                style={{ flex: `0 0 ${showRoadmapSection ? `${roadmapHeight}%` : "36px"}` }}
+              >
+                <div className="flex h-9 shrink-0 items-center justify-between border-b border-zinc-800/80 px-3">
+                  <div className="flex min-w-0 items-center gap-2">
+                    <Folder className="h-3.5 w-3.5 text-green-400" />
+                    <span className="truncate text-[10px] font-bold uppercase tracking-wider text-zinc-300">Product Roadmap</span>
+                    <span className="rounded bg-zinc-900 px-1.5 py-0.5 font-mono text-[9px] text-zinc-500">6 phases</span>
+                  </div>
                   <button
                     type="button"
-                    onClick={createFile}
-                    className="p-1 text-zinc-400 hover:text-teal-300 hover:bg-zinc-800/60 rounded"
-                    title="New File"
+                    onClick={() => setShowRoadmapSection((open) => !open)}
+                    aria-label={showRoadmapSection ? "Collapse product roadmap" : "Expand product roadmap"}
+                    aria-expanded={showRoadmapSection}
+                    aria-controls="buildos-roadmap"
+                    className="rounded p-1 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-200"
                   >
-                    <FilePlus className="h-3.5 w-3.5" />
-                  </button>
-                  <button
-                    type="button"
-                    onClick={deleteFile}
-                    className="p-1 text-zinc-400 hover:text-rose-400 hover:bg-zinc-800/60 rounded"
-                    title="Delete File"
-                  >
-                    <Trash2 className="h-3.5 w-3.5" />
+                    {showRoadmapSection ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronUp className="h-3.5 w-3.5" />}
                   </button>
                 </div>
-              </div>
-
-              {/* Workspace File Tree */}
-              <div className="flex-1 overflow-y-auto p-2 min-h-0">
-                <FileTree nodes={tree} active={activePath} onOpen={(p) => openFile(p)} />
-              </div>
-
-              {/* Collapsible Roadmap Drawer */}
-              <div className="border-t border-zinc-800/80 bg-[#06080d]">
-                <button
-                  type="button"
-                  onClick={() => setShowRoadmapSection(!showRoadmapSection)}
-                  className="w-full flex items-center justify-between px-3 py-2 text-[11px] font-bold text-zinc-300 hover:bg-zinc-900/60 transition-colors uppercase tracking-wider"
-                >
-                  <span className="flex items-center gap-1.5">
-                    <Folder className="h-3.5 w-3.5 text-teal-400" />
-                    Build Roadmap ({workspace.missions.length})
-                  </span>
-                  <span className="text-zinc-500 font-mono text-[10px]">{showRoadmapSection ? "▼" : "▶"}</span>
-                </button>
-
                 {showRoadmapSection && (
-                  <div className="max-h-56 overflow-y-auto px-2 py-1 space-y-0.5">
-                    {workspace.missions.map((m, idx) => {
-                      const isCompleted = completedSteps.includes(m.id);
-                      const isActive = activeMissionIndex === idx;
-                      const isLocked = idx > activeMissionIndex + 1 && !isCompleted;
-                      return (
-                        <button
-                          key={m.id}
-                          type="button"
-                          onClick={() => !isLocked && handleSelectStep(idx)}
-                          disabled={isLocked}
-                          className={`w-full flex items-start gap-2 p-2 rounded text-left text-xs transition-colors ${
-                            isActive
-                              ? "bg-teal-950/60 border border-teal-800/60 text-teal-200"
-                              : isCompleted
-                              ? "text-emerald-400/80 hover:bg-zinc-900"
-                              : isLocked
-                              ? "text-zinc-700 cursor-not-allowed"
-                              : "hover:bg-zinc-900 text-zinc-400"
-                          }`}
-                        >
-                          <div className="mt-0.5 shrink-0">
-                            {isCompleted ? (
-                              <span className="text-emerald-400 text-xs">✓</span>
-                            ) : isActive ? (
-                              <span className="text-teal-400 text-xs">→</span>
-                            ) : (
-                              <span className="text-[10px] font-mono text-zinc-600 font-bold">{idx + 1}</span>
+                  <div id="buildos-roadmap" className="min-h-0 flex-1 overflow-y-auto p-2">
+                    <ol className="space-y-1">
+                      {roadmapPhases.map((roadmapPhase) => {
+                        const doneCount = roadmapPhase.missions.filter(({ mission }) => completedSteps.includes(mission.id)).length;
+                        const isComplete = roadmapPhase.missions.length > 0 && doneCount === roadmapPhase.missions.length;
+                        const isActive = roadmapPhase.index === activeRoadmapPhaseIndex && !isComplete;
+                        const expanded = expandedRoadmapPhase === roadmapPhase.index ||
+                          (expandedRoadmapPhase === null && roadmapPhase.index === activeRoadmapPhaseIndex);
+                        const status = isComplete ? "Completed" : isActive ? "In progress" : "Upcoming";
+                        const panelId = `buildos-roadmap-phase-${roadmapPhase.index}`;
+
+                        return (
+                          <li key={roadmapPhase.name} className="overflow-hidden rounded-md">
+                            <button
+                              type="button"
+                              onClick={() => setExpandedRoadmapPhase((current) =>
+                                current === roadmapPhase.index ||
+                                (current === null && roadmapPhase.index === activeRoadmapPhaseIndex)
+                                  ? -1
+                                  : roadmapPhase.index
+                              )}
+                              aria-expanded={expanded}
+                              aria-controls={panelId}
+                              className={`w-full rounded-md border px-2.5 py-2 text-left transition-colors ${
+                                isComplete
+                                  ? "border-emerald-900/50 bg-emerald-950/20 hover:bg-emerald-950/35"
+                                  : isActive
+                                  ? "border-emerald-700/70 bg-emerald-950/40"
+                                  : "border-transparent bg-zinc-900/40 hover:border-zinc-800 hover:bg-zinc-900/70"
+                              }`}
+                            >
+                              <span className="flex items-center gap-2">
+                                <span className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full border text-[9px] font-bold ${
+                                  isComplete
+                                    ? "border-emerald-500 bg-emerald-500 text-zinc-950"
+                                    : isActive
+                                    ? "border-emerald-400 text-emerald-300"
+                                    : "border-zinc-700 text-zinc-500"
+                                }`}>
+                                  {isComplete ? "✓" : roadmapPhase.index + 1}
+                                </span>
+                                <span className="min-w-0 flex-1">
+                                  <span className={`block truncate text-[10px] font-semibold ${
+                                    isActive ? "text-emerald-200" : isComplete ? "text-emerald-300" : "text-zinc-400"
+                                  }`}>
+                                    {roadmapPhase.name}
+                                  </span>
+                                  <span className={`block text-[9px] ${isActive ? "text-emerald-400" : "text-zinc-600"}`}>
+                                    {status}{roadmapPhase.missions.length > 0 ? ` · ${doneCount}/${roadmapPhase.missions.length} tasks` : ""}
+                                  </span>
+                                </span>
+                                <ChevronDown className={`h-3 w-3 shrink-0 text-zinc-500 transition-transform ${expanded ? "rotate-180" : ""}`} />
+                              </span>
+                              <span className="mt-2 block h-1 overflow-hidden rounded-full bg-zinc-800">
+                                <span
+                                  className={`block h-full rounded-full ${isComplete ? "bg-emerald-400" : isActive ? "bg-emerald-500" : "bg-zinc-700"}`}
+                                  style={{ width: `${roadmapPhase.missions.length ? (doneCount / roadmapPhase.missions.length) * 100 : 0}%` }}
+                                />
+                              </span>
+                            </button>
+                            {expanded && (
+                              <div id={panelId} className="space-y-0.5 px-2 pb-1 pt-1">
+                                <p className="px-1 pb-1 text-[9px] leading-relaxed text-zinc-500">{roadmapPhase.purpose}</p>
+                                {roadmapPhase.missions.length ? roadmapPhase.missions.map(({ mission, missionIndex }) => {
+                                  const completed = completedSteps.includes(mission.id);
+                                  const current = activeMissionIndex === missionIndex;
+                                  const locked = (
+                                    missionIndex > activeMissionIndex + 1 ||
+                                    dependencyBlockedSteps.includes(mission.id)
+                                  ) && !completed;
+                                  return (
+                                    <button
+                                      key={mission.id}
+                                      type="button"
+                                      onClick={() => !locked && void handleSelectStep(missionIndex)}
+                                      disabled={locked}
+                                      aria-current={current ? "step" : undefined}
+                                      className={`flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-[10px] transition-colors ${
+                                        current
+                                          ? "bg-emerald-950/60 text-emerald-200"
+                                          : completed
+                                          ? "text-emerald-400 hover:bg-zinc-900"
+                                          : locked
+                                          ? "cursor-not-allowed text-zinc-700"
+                                          : "text-zinc-400 hover:bg-zinc-900 hover:text-zinc-200"
+                                      }`}
+                                    >
+                                      <span aria-hidden="true" className="w-3 shrink-0 text-center">
+                                        {completed ? "✓" : current ? "◉" : "○"}
+                                      </span>
+                                      <span className="min-w-0 flex-1 truncate">{mission.title}</span>
+                                      {locked && <span className="text-[8px] uppercase text-zinc-600">Locked</span>}
+                                    </button>
+                                  );
+                                }) : (
+                                  <p className="px-2 py-1 text-[9px] italic text-zinc-600">
+                                    No specific build tasks assigned for this product phase yet.
+                                  </p>
+                                )}
+                              </div>
                             )}
-                          </div>
-                          <div className="flex-1 min-w-0">
-                            <div className="flex items-center justify-between gap-1">
-                              <span className="font-medium truncate text-[11px]">{m.title}</span>
-                            </div>
-                            <span className={`text-[9px] font-mono uppercase block ${
-                              m.ownership === "provided" ? "text-zinc-600" : "text-teal-600"
-                            }`}>
-                              {m.ownership === "provided" ? "📖 Study" : "✏️ Your Task"} · {m.time || "15–25 min"}
-                            </span>
-                          </div>
-                        </button>
-                      );
-                    })}
+                          </li>
+                        );
+                      })}
+                    </ol>
                   </div>
                 )}
-              </div>
+              </section>
+              {showRoadmapSection && (
+                <PanelResizeHandle
+                  orientation="horizontal"
+                  label="Resize roadmap and project explorer"
+                  value={roadmapHeight}
+                  min={30}
+                  max={70}
+                  onResizeStart={(event) => beginPanelResize("roadmap", event)}
+                  onResizeBy={(delta) => resizePanelBy("roadmap", delta)}
+                  onReset={() => setRoadmapHeight(48)}
+                />
+              )}
+
+              <section className="flex min-h-0 flex-1 flex-col">
+                {/* Project Explorer */}
+                <div className="flex h-9 shrink-0 items-center justify-between border-b border-zinc-800/80 px-3 text-xs font-semibold text-zinc-300">
+                  <span className="uppercase tracking-wider text-[10px] text-zinc-400 font-mono">PROJECT EXPLORER</span>
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      type="button"
+                      onClick={createFile}
+                      className="p-1 text-zinc-400 hover:text-green-300 hover:bg-zinc-800/60 rounded"
+                      aria-label="Create file"
+                      title="New File"
+                    >
+                      <FilePlus className="h-3.5 w-3.5" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={deleteFile}
+                      className="p-1 text-zinc-400 hover:text-rose-400 hover:bg-zinc-800/60 rounded"
+                      aria-label="Delete active file"
+                      title="Delete File"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                </div>
+                <div className="min-h-0 flex-1 overflow-y-auto p-2">
+                  <FileTree nodes={tree} active={activePath} onOpen={(path) => openFile(path)} />
+                </div>
+              </section>
             </aside>
           )}
 
+          {isDesktop && showExplorer && (
+            <PanelResizeHandle
+              orientation="vertical"
+              label="Resize project explorer"
+              value={displayedExplorerWidth}
+              min={260}
+              max={maxExplorerWidth}
+              onResizeStart={(event) => beginPanelResize("explorer", event)}
+              onResizeBy={(delta) => resizePanelBy("explorer", delta)}
+              onReset={() => setExplorerWidth(320)}
+            />
+          )}
 
           {/* ==================== 2. CENTRAL CODE EDITOR & BOTTOM PANEL ==================== */}
-          <main className="flex-1 flex flex-col min-w-0 bg-[#07090e]">
+          <main ref={mainWorkspaceRef} className="flex min-w-[320px] flex-1 flex-col bg-[#090B0A]">
             {/* Multi-Tab Bar */}
-            <div className="flex items-center h-8 bg-[#0a0d14] border-b border-zinc-800/80 overflow-x-auto shrink-0 select-none">
+            <div className="flex items-center h-8 bg-[#101310] border-b border-zinc-800/80 overflow-x-auto shrink-0 select-none">
               {openTabs.map((tabPath) => {
                 const isActive = activePath === tabPath;
                 const fileName = tabPath.split("/").pop() || tabPath;
@@ -1010,11 +2005,11 @@ export default function BuildOS({ problemId, productName: propName, problemData,
                     onClick={() => openFile(tabPath)}
                     className={`group flex items-center gap-2 px-3 py-1.5 border-r border-zinc-800/80 text-xs font-mono cursor-pointer transition-colors ${
                       isActive
-                        ? "bg-[#07090e] text-teal-300 font-semibold border-t-2 border-t-teal-500"
-                        : "bg-[#0b0e14] text-zinc-400 hover:bg-zinc-900 hover:text-zinc-200"
+                        ? "bg-[#090B0A] text-green-300 font-semibold border-t-2 border-t-green-500"
+                        : "bg-[#151A16] text-zinc-400 hover:bg-zinc-900 hover:text-zinc-200"
                     }`}
                   >
-                    <FileCode className="h-3.5 w-3.5 text-teal-500/80 shrink-0" />
+                    <FileCode className="h-3.5 w-3.5 text-green-500/80 shrink-0" />
                     <span className="truncate max-w-[130px]">{fileName}</span>
                     {isActive && dirty && <span className="h-1.5 w-1.5 rounded-full bg-amber-400" />}
                     {openTabs.length > 1 && (
@@ -1031,211 +2026,285 @@ export default function BuildOS({ problemId, productName: propName, problemData,
               })}
             </div>
 
-            {/* Code Editor Body */}
-            <div className="flex-1 relative min-h-0 bg-[#07090e]">
-              <textarea
-                value={content}
-                onChange={(e) => {
-                  setContent(e.target.value);
-                  setDirty(true);
-                }}
-                spellCheck={false}
-                className="w-full h-full p-4 bg-[#07090e] text-zinc-100 font-mono text-xs leading-relaxed resize-none outline-none border-none selection:bg-teal-900/60"
-                placeholder="// Write your component code here..."
-              />
-              <div className="absolute top-2 right-3 flex items-center gap-2 bg-zinc-900/80 backdrop-blur px-2.5 py-1 rounded border border-zinc-800 text-[10px] font-mono text-zinc-400">
-                <span>{activePath}</span>
-                <button
-                  type="button"
-                  onClick={handleCopyCode}
-                  className="hover:text-zinc-200 text-zinc-400"
-                  title="Copy Code"
-                >
-                  {copied ? "Copied!" : <Copy className="h-3 w-3" />}
-                </button>
+            <div className="flex h-10 shrink-0 items-center justify-between gap-2 border-b border-zinc-800/80 bg-[#101310] px-2 sm:px-3">
+              <div className="flex min-w-0 items-center gap-2 truncate text-[10px] text-zinc-500">
+                <span className="hidden sm:inline">app</span>
+                <span className="hidden sm:inline">›</span>
+                <span className="truncate font-mono text-zinc-300">{activePath}</span>
               </div>
+              <div className="flex shrink-0 items-center gap-1 rounded-md border border-zinc-800 bg-[#090B0A] p-0.5" role="group" aria-label="Workspace view">
+                {(["code", "preview", "split"] as const).map((mode) => (
+                  <button
+                    key={mode}
+                    type="button"
+                    onClick={() => setWorkspaceMode(mode)}
+                    aria-pressed={workspaceMode === mode}
+                    className={`rounded px-2 py-1 text-[10px] font-medium capitalize transition-colors ${
+                      workspaceMode === mode
+                        ? "bg-emerald-950 text-emerald-300 ring-1 ring-inset ring-emerald-700/70"
+                        : "text-zinc-400 hover:bg-zinc-800 hover:text-zinc-200"
+                    }`}
+                  >
+                    {mode}
+                  </button>
+                ))}
+              </div>
+              {workspaceMode !== "code" && (
+                <div className="hidden shrink-0 items-center gap-1 rounded border border-zinc-800 bg-zinc-900 p-0.5 sm:flex">
+                  <button
+                    type="button"
+                    onClick={() => setDeviceMode("desktop")}
+                    aria-label="Desktop preview viewport"
+                    aria-pressed={deviceMode === "desktop"}
+                    className={`rounded p-1 ${deviceMode === "desktop" ? "bg-zinc-800 text-green-300" : "text-zinc-400 hover:text-zinc-200"}`}
+                  >
+                    <Monitor className="h-3 w-3" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setDeviceMode("tablet")}
+                    aria-label="Tablet preview viewport"
+                    aria-pressed={deviceMode === "tablet"}
+                    className={`rounded p-1 ${deviceMode === "tablet" ? "bg-zinc-800 text-green-300" : "text-zinc-400 hover:text-zinc-200"}`}
+                  >
+                    <Tablet className="h-3 w-3" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setDeviceMode("mobile")}
+                    aria-label="Mobile preview viewport"
+                    aria-pressed={deviceMode === "mobile"}
+                    className={`rounded p-1 ${deviceMode === "mobile" ? "bg-zinc-800 text-green-300" : "text-zinc-400 hover:text-zinc-200"}`}
+                  >
+                    <Smartphone className="h-3 w-3" />
+                  </button>
+                </div>
+              )}
+            </div>
+
+            <div className="flex min-h-0 flex-1 overflow-hidden">
+              <section
+                aria-label="Code editor"
+                className={`relative min-h-0 min-w-0 flex-1 bg-[#090B0A] ${workspaceMode === "preview" ? "hidden" : ""}`}
+                style={workspaceMode === "split" ? { flexBasis: `${splitRatio}%`, flexGrow: 0 } : undefined}
+              >
+                  <textarea
+                    value={content}
+                    onChange={(e) => {
+                      updateEditorContent(e.target.value);
+                      setDirty(true);
+                    }}
+                    spellCheck={false}
+                    aria-label={`Code editor: ${activePath}`}
+                    className="h-full w-full resize-none border-none bg-[#090B0A] p-4 font-mono text-xs leading-relaxed text-zinc-100 outline-none selection:bg-green-900/60"
+                    placeholder="// Write your component code here..."
+                  />
+                  <div className="absolute right-3 top-2 flex items-center gap-2 rounded border border-zinc-800 bg-zinc-900/80 px-2.5 py-1 font-mono text-[10px] text-zinc-400 backdrop-blur">
+                    <span>{activePath}</span>
+                    <button
+                      type="button"
+                      onClick={handleCopyCode}
+                      className="text-zinc-400 hover:text-zinc-200"
+                      title="Copy Code"
+                    >
+                      {copied ? "Copied!" : <Copy className="h-3 w-3" />}
+                    </button>
+                  </div>
+              </section>
+              {workspaceMode === "split" && (
+                <PanelResizeHandle
+                  orientation="vertical"
+                  label="Resize code editor and live preview"
+                  value={splitRatio}
+                  min={30}
+                  max={70}
+                  onResizeStart={(event) => beginPanelResize("split", event)}
+                  onResizeBy={(delta) => resizePanelBy("split", delta)}
+                  onReset={() => setSplitRatio(50)}
+                />
+              )}
+              <section
+                aria-label="Live preview"
+                className={`min-h-0 min-w-0 flex-1 bg-[#090B0A] ${workspaceMode === "code" ? "hidden" : ""} ${workspaceMode === "split" ? "border-l border-[#252D27]" : ""}`}
+              >
+                <PreviewPane
+                  previewHtml={previewHtml}
+                  runtimeState={runtimeState}
+                  runError={runError}
+                  isRunInProgress={isRunInProgress}
+                  previewKey={previewKey}
+                  previewRef={previewRef}
+                  deviceMode={deviceMode}
+                  runProject={runProject}
+                  refreshPreview={() => {
+                    if (!previewHtml) return;
+                    setRunError(null);
+                    setRuntimeState("STARTING");
+                    setPreviewKey(Date.now());
+                  }}
+                />
+              </section>
             </div>
 
             {/* ==================== 3. BOTTOM DOCK (PREVIEW / CONSOLE / TESTS) ==================== */}
-            <div className="h-[280px] shrink-0 flex flex-col bg-[#090b10] border-t border-zinc-800/80">
+            {bottomPanelOpen && (
+              <PanelResizeHandle
+                orientation="horizontal"
+                label="Resize developer console"
+                value={bottomPanelHeight}
+                min={150}
+                max={Math.max(150, Math.min(520, (mainWorkspaceRef.current?.clientHeight ?? 800) - 180))}
+                onResizeStart={(event) => beginPanelResize("console", event)}
+                onResizeBy={(delta) => resizePanelBy("console", delta)}
+                onReset={() => setBottomPanelHeight(200)}
+              />
+            )}
+            <div
+              className="flex min-h-0 shrink-0 flex-col border-t border-[#252D27] bg-[#101310]"
+              id="buildos-bottom-panel"
+              style={{
+                height: bottomPanelOpen ? bottomPanelHeight : 36,
+                flexBasis: bottomPanelOpen ? bottomPanelHeight : 36,
+              }}
+            >
               {/* Dock Tab Header Bar */}
-              <div className="flex items-center justify-between h-8 px-3 bg-[#0a0d14] border-b border-zinc-800/80 text-xs shrink-0">
-                <div className="flex items-center gap-1">
-                  <button
-                    type="button"
-                    onClick={() => setActiveBottomTab("preview")}
-                    className={`px-3 py-1 text-xs font-semibold rounded-t border-b-2 transition-colors ${
-                      activeBottomTab === "preview"
-                        ? "border-teal-500 text-teal-300 bg-[#090b10]"
-                        : "border-transparent text-zinc-400 hover:text-zinc-200"
-                    }`}
-                  >
-                    Preview Output
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setActiveBottomTab("console")}
-                    className={`px-3 py-1 text-xs font-semibold rounded-t border-b-2 transition-colors ${
-                      activeBottomTab === "console"
-                        ? "border-teal-500 text-teal-300 bg-[#090b10]"
-                        : "border-transparent text-zinc-400 hover:text-zinc-200"
-                    }`}
-                  >
-                    Console ({logs.length})
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setActiveBottomTab("tests")}
-                    className={`px-3 py-1 text-xs font-semibold rounded-t border-b-2 transition-colors ${
-                      activeBottomTab === "tests"
-                        ? "border-teal-500 text-teal-300 bg-[#090b10]"
-                        : "border-transparent text-zinc-400 hover:text-zinc-200"
-                    }`}
-                  >
-                    Tests ({activeMission.tests.length})
-                  </button>
-                </div>
-
-                {/* Device Viewport Selector */}
-                {activeBottomTab === "preview" && (
-                  <div className="flex items-center gap-1 bg-zinc-900 border border-zinc-800 rounded p-0.5">
+              <div className="flex items-center justify-between gap-1 h-8 px-2 sm:px-3 bg-[#101310] border-b border-zinc-800/80 text-xs shrink-0">
+                <div className="flex min-w-0 items-center gap-1 overflow-x-auto">
+                  {([
+                    ["problems", `Problems (${Number(Boolean(runError)) + Number(Boolean(saveError)) + (validationResult?.failures.length || 0)})`],
+                    ["console", `Console (${logs.length})`],
+                    ["terminal", "Terminal"],
+                    ["tests", `Tests (${activeMission.tests.length})`],
+                    ["build", "Build Output"],
+                  ] as const).map(([tab, label]) => (
                     <button
+                      key={tab}
                       type="button"
-                      onClick={() => setDeviceMode("desktop")}
-                      className={`p-1 rounded ${deviceMode === "desktop" ? "bg-zinc-800 text-teal-300" : "text-zinc-400 hover:text-zinc-200"}`}
-                      title="Desktop Viewport"
-                    >
-                      <Monitor className="h-3 w-3" />
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setDeviceMode("tablet")}
-                      className={`p-1 rounded ${deviceMode === "tablet" ? "bg-zinc-800 text-teal-300" : "text-zinc-400 hover:text-zinc-200"}`}
-                      title="Tablet Viewport"
-                    >
-                      <Tablet className="h-3 w-3" />
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setDeviceMode("mobile")}
-                      className={`p-1 rounded ${deviceMode === "mobile" ? "bg-zinc-800 text-teal-300" : "text-zinc-400 hover:text-zinc-200"}`}
-                      title="Mobile Viewport"
-                    >
-                      <Smartphone className="h-3 w-3" />
-                    </button>
-                  </div>
-                )}
-              </div>
-
-              {/* Dock Tab Content Body */}
-              <div className="flex-1 relative min-h-0 bg-[#07090e] overflow-hidden">
-                {/* PREVIEW TAB */}
-                {activeBottomTab === "preview" && (
-                  <div className="w-full h-full flex justify-center bg-[#07090e] p-2 overflow-auto">
-                    <div
-                      className={`h-full bg-white rounded shadow-lg overflow-hidden transition-all duration-300 ${
-                        deviceMode === "mobile"
-                          ? "w-[375px]"
-                          : deviceMode === "tablet"
-                          ? "w-[768px]"
-                          : "w-full"
+                      onClick={() => setActiveConsoleTab(tab)}
+                      aria-pressed={activeConsoleTab === tab}
+                      className={`shrink-0 px-1.5 sm:px-3 py-1 text-[10px] sm:text-xs font-semibold rounded-t border-b-2 transition-colors ${
+                        activeConsoleTab === tab
+                          ? "border-green-500 text-green-300 bg-[#101310]"
+                          : "border-transparent text-zinc-400 hover:text-zinc-200"
                       }`}
                     >
-                      {previewHtml ? (
-                        <iframe
-                          key={previewKey}
-                          ref={previewRef}
-                          srcDoc={previewHtml}
-                          title="BuildOS Preview Sandbox"
-                          className="w-full h-full border-none"
-                          sandbox="allow-scripts allow-modals"
-                        />
-                      ) : (
-                        <div className="w-full h-full flex flex-col items-center justify-center p-6 text-center bg-zinc-950 text-zinc-400">
-                          <Play className="h-8 w-8 text-teal-500/60 mb-2" />
-                          <p className="text-xs font-semibold text-zinc-300">Click ▶ Run to render preview output</p>
-                          <p className="text-[11px] text-zinc-500 mt-1 max-w-sm">
-                            Your workspace code compiles in browser sandbox memory without requiring local Node.js or npm.
-                          </p>
-                        </div>
+                      {label}
+                    </button>
+                  ))}
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setBottomPanelOpen((open) => !open)}
+                  aria-label={bottomPanelOpen ? "Collapse developer console" : "Expand developer console"}
+                  aria-expanded={bottomPanelOpen}
+                  aria-controls="buildos-bottom-panel"
+                  title={bottomPanelOpen ? "Collapse console (Ctrl+`)" : "Expand console (Ctrl+`)"}
+                  className="ml-2 rounded p-1 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-200"
+                >
+                  {bottomPanelOpen ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronUp className="h-3.5 w-3.5" />}
+                </button>
+              </div>
+
+              {bottomPanelOpen && (
+                <div className="min-h-0 flex-1 overflow-y-auto bg-[#090B0A] p-3">
+                  {activeConsoleTab === "problems" && (
+                    <div className="space-y-2 text-[11px]">
+                      {runError && <p className="rounded border border-rose-900/70 bg-rose-950/30 p-2 text-rose-300">Build/preview: {runError}</p>}
+                      {saveError && <p className="rounded border border-rose-900/70 bg-rose-950/30 p-2 text-rose-300">Save: {saveError}</p>}
+                      {validationResult?.failures.map((failure, index) => (
+                        <p key={`${index}-${failure}`} className="rounded border border-amber-900/70 bg-amber-950/20 p-2 text-amber-200">
+                          Mission validation: {failure}
+                        </p>
+                      ))}
+                      {!runError && !saveError && !validationResult?.failures.length && (
+                        <p className="text-zinc-500">No problems detected.</p>
                       )}
                     </div>
-                  </div>
-                )}
+                  )}
 
-                {/* CONSOLE TAB */}
-                {activeBottomTab === "console" && (
-                  <div className="w-full h-full p-3 font-mono text-xs bg-[#07090e] overflow-y-auto space-y-1">
-                    <div className="text-[10px] text-zinc-500 font-bold uppercase tracking-wider mb-2">
-                      $ BuildOS Diagnostic Console
-                    </div>
-                    {logs.map((log, i) => (
-                      <div
-                        key={i}
-                        className={`text-[11px] leading-relaxed ${
-                          log.startsWith("Error:") || log.startsWith("Build failed") || log.startsWith("✗")
-                            ? "text-rose-400 font-semibold"
-                            : log.startsWith("✓")
-                            ? "text-emerald-400"
-                            : log.startsWith("---")
-                            ? "text-teal-400 font-bold"
-                            : "text-zinc-300"
-                        }`}
-                      >
-                        {log}
-                      </div>
-                    ))}
-                    {runError && (
-                      <div className="p-2.5 rounded bg-rose-950/60 border border-rose-800/80 text-rose-200 text-xs mt-2">
-                        <span className="font-bold">Build Error:</span> {runError}
-                      </div>
-                    )}
-                  </div>
-                )}
-
-                {/* TESTS TAB */}
-                {activeBottomTab === "tests" && (
-                  <div className="w-full h-full p-4 bg-[#07090e] overflow-y-auto space-y-3">
-                    <div className="text-xs font-bold text-zinc-300 uppercase tracking-wider">
-                      Validation Suite for Task {activeMissionIndex + 1}: {activeMission.title}
-                    </div>
-                    <div className="space-y-1.5">
-                      {activeMission.tests.map((test, i) => (
+                  {activeConsoleTab === "console" && (
+                    <div className="space-y-1 font-mono text-xs">
+                      <div className="mb-2 text-[10px] font-bold uppercase tracking-wider text-zinc-500">$ BuildOS Diagnostic Console</div>
+                      {logs.map((log, index) => (
                         <div
-                          key={i}
-                          className="flex items-center gap-2 p-2 rounded bg-zinc-900/60 border border-zinc-800/80 text-xs text-teal-300"
+                          key={`${index}-${log}`}
+                          className={`text-[11px] leading-relaxed ${
+                            log.startsWith("Error:") || log.startsWith("Build failed") || log.startsWith("✗")
+                              ? "font-semibold text-rose-400"
+                              : log.startsWith("✓")
+                              ? "text-emerald-400"
+                              : log.startsWith("---")
+                              ? "font-bold text-green-400"
+                              : "text-zinc-300"
+                          }`}
                         >
-                          <Check className="h-3.5 w-3.5 text-emerald-400 shrink-0" />
-                          <span>{test}</span>
+                          {log}
                         </div>
                       ))}
                     </div>
-                    {validationResult && (
-                      <div className="p-3 rounded text-xs border bg-zinc-900">
-                        {validationResult.ok ? (
-                          <div className="text-emerald-400 font-semibold">✓ All Task {activeMissionIndex + 1} validation criteria satisfied!</div>
-                        ) : (
-                          <div className="text-rose-400 font-semibold space-y-1">
-                            <div>Validation Issues:</div>
-                            {validationResult.failures.map((f, idx) => (
-                              <div key={idx} className="text-[11px] text-rose-300">• {f}</div>
-                            ))}
-                          </div>
-                        )}
+                  )}
+
+                  {activeConsoleTab === "terminal" && (
+                    <div className="flex h-full min-h-16 items-center gap-2 font-mono text-[11px] text-zinc-500">
+                      <span className="text-emerald-500">$</span>
+                      Interactive terminal is not available in the hosted browser workspace.
+                    </div>
+                  )}
+
+                  {activeConsoleTab === "tests" && (
+                    <div className="space-y-3">
+                      <div className="text-xs font-bold uppercase tracking-wider text-zinc-300">
+                        Mission criteria · {activeMission.title}
                       </div>
-                    )}
-                  </div>
-                )}
-              </div>
+                      <p className="text-[10px] text-zinc-500">Guidance criteria; BuildOS checks code markers and preview state locally.</p>
+                      <div className="space-y-1.5">
+                        {activeMission.tests.map((test, index) => (
+                          <div key={index} className="flex items-center gap-2 rounded border border-zinc-800/80 bg-zinc-900/60 p-2 text-xs text-zinc-300">
+                            <span aria-hidden="true" className="h-1.5 w-1.5 shrink-0 rounded-full bg-zinc-500" />
+                            <span>{test}</span>
+                          </div>
+                        ))}
+                      </div>
+                      {validationResult && (
+                        <div className="rounded border border-zinc-800 bg-zinc-900 p-3 text-xs">
+                          {validationResult.ok ? (
+                            <div className="font-semibold text-green-400">Local mission checks passed for Task {activeMissionIndex + 1}.</div>
+                          ) : (
+                            <div className="space-y-1 font-semibold text-rose-400">
+                              <div>Validation Issues:</div>
+                              {validationResult.failures.map((failure, index) => (
+                                <div key={index} className="text-[11px] text-rose-300">• {failure}</div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {activeConsoleTab === "build" && (
+                    <div className="space-y-1 font-mono text-[11px]">
+                      {(logs.filter((log) => /build|compil|install|workspace|failed|error|preview/i.test(log)).length
+                        ? logs.filter((log) => /build|compil|install|workspace|failed|error|preview/i.test(log))
+                        : logs
+                      ).map((log, index) => (
+                        <div key={`${index}-${log}`} className={/failed|error/i.test(log) ? "text-rose-400" : "text-zinc-300"}>
+                          {log}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
 
               {/* Bottom Validation Action Bar */}
-              <div className="flex items-center justify-between px-4 py-1.5 bg-[#0a0d14] border-t border-zinc-800/80 shrink-0">
+              {bottomPanelOpen && <div className="flex items-center justify-between px-4 py-1.5 bg-[#101310] border-t border-zinc-800/80 shrink-0">
                 <div className="flex items-center gap-2 text-[11px] font-mono">
                   <span className="text-zinc-500">Mission {activeMissionIndex + 1}/{workspace.missions.length}</span>
                   <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${
                     activeMission.ownership === "provided"
                       ? "bg-zinc-800 text-zinc-400"
-                      : "bg-teal-950/80 text-teal-400 border border-teal-800/50"
+                      : "bg-green-950/80 text-green-400 border border-green-800/50"
                   }`}>
                     {activeMission.ownership === "provided" ? "📖 Study" : "✏️ Your Task"}
                   </span>
@@ -1249,64 +2318,77 @@ export default function BuildOS({ problemId, productName: propName, problemData,
                   <Check className="h-3.5 w-3.5 stroke-[3]" />
                   <span>Submit &amp; Validate</span>
                 </button>
-              </div>
+              </div>}
             </div>
           </main>
 
+          {isDesktop && showNovaPanel && (
+            <PanelResizeHandle
+              orientation="vertical"
+              label="Resize Nova mentor panel"
+              reverseKeyboard
+              value={displayedNovaPanelWidth}
+              min={280}
+              max={maxNovaPanelWidth}
+              onResizeStart={(event) => beginPanelResize("nova", event)}
+              onResizeBy={(delta) => resizePanelBy("nova", delta)}
+              onReset={() => setNovaPanelWidth(300)}
+            />
+          )}
+
           {/* ==================== 4. RIGHT NOVA AI COACH SIDEBAR ==================== */}
           {showNovaPanel && (
-            <aside className="w-[300px] shrink-0 flex flex-col bg-[#090b10] min-h-0 border-l border-zinc-800/80">
+            <aside
+              id="buildos-nova"
+              className="absolute inset-y-0 right-0 z-20 flex w-[min(90vw,480px)] min-h-0 shrink-0 flex-col overflow-hidden border-l border-[#252D27] bg-[#101310] shadow-2xl lg:relative lg:inset-auto lg:z-auto lg:w-auto lg:shadow-none"
+              style={isDesktop ? { width: displayedNovaPanelWidth, flexBasis: displayedNovaPanelWidth } : undefined}
+            >
               {/* Nova Mentor Header — Build Mode */}
-              <div className="border-b border-zinc-800/80 bg-[#0b0e14]">
-                <div className="flex items-center justify-between px-3 pt-3 pb-2">
-                  <div className="flex items-center gap-2">
-                    <Sparkles className="h-4 w-4 text-teal-400" />
-                    <span className="font-bold text-xs text-zinc-100 uppercase tracking-wider">Nova AI Mentor</span>
+              <div className="shrink-0 border-b border-zinc-800/80 bg-[#151A16]">
+                <div className="flex items-center justify-between gap-2 px-3 py-2">
+                  <div className="flex min-w-0 items-center gap-2">
+                    <Sparkles className="h-4 w-4 text-green-400" />
+                    <span className="truncate font-bold text-xs text-zinc-100 uppercase tracking-wider">Nova AI Mentor</span>
                   </div>
-                  <span className={`text-[10px] font-mono px-2 py-0.5 rounded-full font-semibold ${
+                  <span className={`hidden shrink-0 rounded-full border px-2 py-0.5 font-mono text-[9px] font-semibold sm:inline-flex ${
                     buildMode === "guided"
                       ? "bg-emerald-950/80 text-emerald-300 border border-emerald-700/60"
                       : buildMode === "assisted"
                       ? "bg-amber-950/80 text-amber-300 border border-amber-700/60"
-                      : "bg-violet-950/80 text-violet-300 border border-violet-700/60"
+                      : "bg-green-950/80 text-green-300 border border-green-700/60"
                   }`}>
                     {buildMode === "guided" ? "📚 Guided Build" : buildMode === "assisted" ? "🔧 Assisted Build" : "🚀 Independent Build"}
                   </span>
-                </div>
-                {/* Role Clarity Strip */}
-                <div className="mx-3 mb-3 rounded-lg bg-zinc-900/80 border border-zinc-800/60 divide-y divide-zinc-800/60 text-[10px]">
-                  <div className="flex items-center gap-2 px-2.5 py-1.5">
-                    <span className="text-zinc-500 w-14 shrink-0">Your role:</span>
-                    <span className="font-bold text-teal-300 uppercase tracking-wide">
-                      {buildMode === "guided" ? "BUILD THE PRODUCT" : buildMode === "assisted" ? "OWN THE CODE" : "BUILD INDEPENDENTLY"}
-                    </span>
-                  </div>
-                  <div className="flex items-center gap-2 px-2.5 py-1.5">
-                    <span className="text-zinc-500 w-14 shrink-0">Nova:</span>
-                    <span className="font-bold text-amber-300 uppercase tracking-wide">
-                      {buildMode === "guided" ? "TEACH & GUIDE" : buildMode === "assisted" ? "ASSIST WHEN STUCK" : "REVIEW & AUDIT"}
-                    </span>
-                  </div>
-                  <div className="flex items-center gap-2 px-2.5 py-1.5">
-                    <span className="text-zinc-500 w-14 shrink-0">Mission:</span>
-                    <span className="text-zinc-300 truncate">{activeMission.title}</span>
-                  </div>
+                  <span className="hidden shrink-0 items-center gap-1 text-[9px] text-zinc-400 sm:flex" aria-live="polite">
+                    <span className={`h-1.5 w-1.5 rounded-full ${novaLoading ? "animate-pulse bg-amber-400" : "bg-emerald-400"}`} />
+                    {novaLoading ? "Working" : "Online"}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setMobileNovaPanelOpen(false)}
+                    aria-label="Close Nova mentor"
+                    className="rounded p-1 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-200 lg:hidden"
+                  >
+                    <PanelRightClose className="h-3.5 w-3.5" />
+                  </button>
                 </div>
               </div>
 
-              {/* Collapsible Journey Blueprint Drawer */}
-              <div className="border-b border-zinc-800/80 bg-[#06080d]">
+              <NovaModeSelector value={novaMode} onChange={setNovaMode} disabled={novaLoading || !novaConversationReady} />
+
+              {/* Collapsible project context */}
+              <div className="shrink-0 border-b border-zinc-800/80 bg-[#101310]">
                 <button
                   type="button"
                   onClick={() => setShowBlueprint((prev) => !prev)}
-                  className="w-full px-3 py-2 flex items-center justify-between text-left hover:bg-zinc-900/40 transition-colors cursor-pointer"
+                  aria-expanded={showBlueprint}
+                  aria-controls="buildos-blueprint"
+                  className="w-full px-3 py-2.5 flex items-center justify-between text-left hover:bg-zinc-900/50 transition-colors focus-visible:outline focus-visible:outline-1 focus-visible:outline-inset focus-visible:outline-emerald-500"
                 >
-                  <div className="flex items-center gap-1.5 text-[11px] font-semibold text-teal-400">
+                  <div className="flex min-w-0 items-center gap-2 text-[11px] font-semibold text-emerald-300">
                     <Compass className="h-3.5 w-3.5" />
-                    <span>Journey Blueprint</span>
-                    <span className="text-[9px] px-1.5 py-0.2 rounded bg-zinc-800 text-zinc-300 font-mono">
-                      Phases 1–4 Loaded
-                    </span>
+                    <span>Project context</span>
+                    <span className="truncate font-normal text-zinc-500">{productName}</span>
                   </div>
                   {showBlueprint ? (
                     <ChevronUp className="h-3.5 w-3.5 text-zinc-400" />
@@ -1316,110 +2398,91 @@ export default function BuildOS({ problemId, productName: propName, problemData,
                 </button>
 
                 {showBlueprint && (
-                  <div className="px-3 pb-3 pt-1 space-y-2 text-[11px] text-zinc-300 border-t border-zinc-900 bg-zinc-950/70 max-h-56 overflow-y-auto font-mono">
-                    <div>
-                      <span className="text-zinc-500 block text-[9px] uppercase font-bold">Problem Statement</span>
-                      <p className="text-zinc-200 text-[10px] line-clamp-2">{problemData?.title || workspace.statement}</p>
+                  <div id="buildos-blueprint" className="max-h-56 space-y-2 overflow-y-auto border-t border-zinc-800/80 bg-[#0D100E] px-3 pb-3 pt-2.5 text-[11px]">
+                    <div className="grid grid-cols-[76px_minmax(0,1fr)] gap-2">
+                      <span className="text-[10px] font-medium text-zinc-500">Objective</span>
+                      <p className="text-zinc-200">{journeyPhases?.design?.productGoal || problemData?.title || workspace.statement}</p>
                     </div>
-
-                    {journeyPhases?.design?.productGoal && (
-                      <div>
-                        <span className="text-zinc-500 block text-[9px] uppercase font-bold">Product Goal</span>
-                        <p className="text-teal-300 text-[10px]">{journeyPhases.design.productGoal}</p>
-                      </div>
-                    )}
-
-                    {(journeyPhases?.design?.selectedUsers?.length || journeyPhases?.design?.customUserRole) && (
-                      <div>
-                        <span className="text-zinc-500 block text-[9px] uppercase font-bold">Target Persona</span>
-                        <p className="text-zinc-300 text-[10px]">
-                          {journeyPhases?.design?.selectedUsers?.join(", ") || journeyPhases?.design?.customUserRole}
-                        </p>
-                      </div>
-                    )}
-
-                    {Array.isArray(journeyPhases?.design?.sketches) && journeyPhases.design.sketches.filter((s: any) => s.imageUrl).length > 0 && (
-                      <div>
-                        <span className="text-zinc-500 block text-[9px] uppercase font-bold">Uploaded Mockups</span>
-                        <p className="text-emerald-400 text-[10px]">
-                          ✓ {journeyPhases.design.sketches.filter((s: any) => s.imageUrl).length} screens uploaded:{" "}
-                          {journeyPhases.design.sketches.filter((s: any) => s.imageUrl).map((s: any) => s.screenName || "Screen").join(", ")}
-                        </p>
-                      </div>
-                    )}
-
-                    {journeyPhases?.plan?.techDecisions && Object.keys(journeyPhases.plan.techDecisions).length > 0 && (
-                      <div>
-                        <span className="text-zinc-500 block text-[9px] uppercase font-bold">Tech Stack Decisions</span>
-                        <div className="flex flex-wrap gap-1 mt-0.5">
+                    <div className="grid grid-cols-[76px_minmax(0,1fr)] gap-2">
+                      <span className="text-[10px] font-medium text-zinc-500">Phase</span>
+                      <p className="text-zinc-300">{ROADMAP_PHASES[activeRoadmapPhaseIndex].name}</p>
+                    </div>
+                    <div className="grid grid-cols-[76px_minmax(0,1fr)] gap-2">
+                      <span className="text-[10px] font-medium text-zinc-500">Current task</span>
+                      <p className="text-zinc-300">{activeMission.title}</p>
+                    </div>
+                    {journeyPhases?.plan?.techDecisions && Object.values(journeyPhases.plan.techDecisions).some(Boolean) && (
+                      <div className="grid grid-cols-[76px_minmax(0,1fr)] gap-2">
+                        <span className="text-[10px] font-medium text-zinc-500">Tech stack</span>
+                        <div className="flex flex-wrap gap-1">
                           {Object.entries(journeyPhases.plan.techDecisions).map(([k, v]) => (
-                            <span key={k} className="px-1.5 py-0.5 rounded bg-zinc-800 text-[9px] text-zinc-300">
+                            v ? <span key={k} className="rounded border border-zinc-700/70 bg-zinc-900 px-1.5 py-0.5 text-[10px] text-zinc-300">
                               {k}: {String(v)}
-                            </span>
+                            </span> : null
                           ))}
                         </div>
                       </div>
                     )}
-
-                    {Array.isArray(journeyPhases?.plan?.modules) && journeyPhases.plan.modules.length > 0 && (
-                      <div>
-                        <span className="text-zinc-500 block text-[9px] uppercase font-bold">Planned Modules</span>
-                        <p className="text-zinc-300 text-[10px]">
-                          {journeyPhases.plan.modules.map((m: any) => m.name || m.title).join(" · ")}
-                        </p>
+                    {(journeyPhases?.design?.selectedUsers?.length || journeyPhases?.design?.customUserRole) && (
+                      <div className="grid grid-cols-[76px_minmax(0,1fr)] gap-2">
+                        <span className="text-[10px] font-medium text-zinc-500">Audience</span>
+                        <p className="text-zinc-400">{journeyPhases.design.selectedUsers?.join(", ") || journeyPhases.design.customUserRole}</p>
                       </div>
                     )}
-
-                    <div className="pt-1 border-t border-zinc-800/60 text-[9px] text-zinc-400">
-                      AI implementation:{" "}
-                      <strong className={`${
-                        buildMode === "guided" ? "text-amber-400" : buildMode === "assisted" ? "text-teal-300" : "text-violet-300"
-                      }`}>
-                        {buildMode === "guided" ? "Limited — You implement" : buildMode === "assisted" ? "Moderate — When needed" : "On request only"}
-                      </strong>
-                    </div>
+                    {Array.isArray(journeyPhases?.plan?.modules) && journeyPhases.plan.modules.length > 0 && (
+                      <div className="grid grid-cols-[76px_minmax(0,1fr)] gap-2">
+                        <span className="text-[10px] font-medium text-zinc-500">Modules</span>
+                        <p className="text-zinc-400">{journeyPhases.plan.modules.map((m: any) => m.name || m.title).filter(Boolean).join(" · ")}</p>
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
 
-              {/* Chat Input & Hint Ladder */}
-              <div className="p-2.5 border-b border-zinc-800/80 bg-[#0b0e15] space-y-2">
+              {/* Conversation composer and contextual help */}
+              <div className="order-5 shrink-0 border-t border-zinc-800/80 bg-[#101310] p-2.5">
                 <form
                   onSubmit={(e) => {
                     e.preventDefault();
                     sendNovaMessage();
                   }}
-                  className="flex items-center gap-1.5"
+                  className="flex items-end gap-2"
                 >
-                  <input
-                    type="text"
+                  <textarea
+                    rows={2}
                     value={novaInput}
+                    disabled={novaLoading || !novaConversationReady}
                     onChange={(e) => setNovaInput(e.target.value)}
-                    placeholder={
-                      buildMode === "guided"
-                        ? "Ask for an explanation, hint, or debug help..."
-                        : buildMode === "assisted"
-                        ? "Share your code or ask what you're stuck on..."
-                        : "Share your approach for review or audit..."
-                    }
-                    className="flex-1 bg-zinc-900 border border-zinc-800 rounded px-2.5 py-1.5 text-xs text-zinc-200 placeholder-zinc-500 outline-none focus:border-teal-500/80"
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
+                        event.preventDefault();
+                        event.currentTarget.form?.requestSubmit();
+                      }
+                    }}
+                    aria-label="Message Nova"
+                    placeholder="Ask Nova to explain, build, or debug..."
+                    className="min-h-10 max-h-28 flex-1 resize-y overflow-y-auto rounded-md border border-zinc-700 bg-[#090B0A] px-3 py-2 text-xs leading-relaxed text-zinc-200 placeholder-zinc-500 outline-none transition-colors focus:border-emerald-600/80 focus:ring-1 focus:ring-emerald-700/40 disabled:opacity-50"
                   />
                   <button
                     type="submit"
-                    disabled={!novaInput.trim() || novaLoading}
-                    className="p-1.5 rounded bg-teal-500 hover:bg-teal-400 text-zinc-950 font-bold disabled:opacity-40 transition-colors cursor-pointer"
+                    disabled={!novaInput.trim() || novaLoading || !novaConversationReady}
+                    aria-label={!novaConversationReady ? "Loading conversation" : novaLoading ? "Nova is responding" : "Send message"}
+                    className="mb-0.5 inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-emerald-500 text-zinc-950 transition-colors hover:bg-emerald-400 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-400 disabled:cursor-not-allowed disabled:opacity-40"
                   >
-                    <Send className="h-3.5 w-3.5" />
+                    {novaLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-3.5 w-3.5" />}
                   </button>
                 </form>
 
                 {/* Hint Ladder Buttons — prefer lower levels first */}
-                <div className="space-y-1">
-                  <div className="text-[9px] text-zinc-500 uppercase tracking-wider font-bold">Available Help</div>
-                  <div className="flex flex-wrap gap-1 text-[10px]">
+                <div className="mt-2 space-y-1.5">
+                  <div className="text-[9px] font-semibold uppercase tracking-wider text-zinc-500">Available help</div>
+                  <div className="flex flex-wrap gap-1.5 text-[10px]">
                     <button
                       type="button"
-                      onClick={() => sendNovaMessage(`Explain the concept I need to understand for this task: "${activeMission.title}" — what is it, why does it exist, and how does it work?`)}
+                      onClick={() => {
+                        setNovaMode("UNDERSTAND");
+                        void sendNovaMessage(`Explain the concept I need to understand for this task: "${activeMission.title}" — what is it, why does it exist, and how does it work?`, "UNDERSTAND");
+                      }}
                       className="px-2 py-1 rounded bg-zinc-900 hover:bg-zinc-800 text-zinc-300 border border-zinc-700/50 transition-colors cursor-pointer"
                       title="Get a concept explanation — no code"
                     >
@@ -1427,7 +2490,10 @@ export default function BuildOS({ problemId, productName: propName, problemData,
                     </button>
                     <button
                       type="button"
-                      onClick={() => sendNovaMessage(`Give me a directional hint to get started on "${activeMission.title}" without giving me the full solution`)}
+                      onClick={() => {
+                        setNovaMode("PLAN");
+                        void sendNovaMessage(`Give me a directional hint to get started on "${activeMission.title}" without giving me the full solution`, "PLAN");
+                      }}
                       className="px-2 py-1 rounded bg-zinc-900 hover:bg-zinc-800 text-zinc-300 border border-zinc-700/50 transition-colors cursor-pointer"
                       title="Get a nudge in the right direction"
                     >
@@ -1435,7 +2501,10 @@ export default function BuildOS({ problemId, productName: propName, problemData,
                     </button>
                     <button
                       type="button"
-                      onClick={() => sendNovaMessage(`Show me a small focused example relevant to "${activeMission.title}" — not my full solution, just a pattern I can learn from`)}
+                      onClick={() => {
+                        setNovaMode("BUILD");
+                        void sendNovaMessage(`Show me a small focused example relevant to "${activeMission.title}" — not my full solution, just a pattern I can learn from`, "BUILD");
+                      }}
                       className="px-2 py-1 rounded bg-zinc-900 hover:bg-zinc-800 text-zinc-300 border border-zinc-700/50 transition-colors cursor-pointer"
                       title="See a small focused example"
                     >
@@ -1443,7 +2512,10 @@ export default function BuildOS({ problemId, productName: propName, problemData,
                     </button>
                     <button
                       type="button"
-                      onClick={() => sendNovaMessage(`I'm getting an error in ${activePath}. Here's my code:\n\n${content.slice(0, 800)}\n\nHelp me understand what's wrong and how to fix it.`)}
+                      onClick={() => {
+                        setNovaMode("DEBUG");
+                        void sendNovaMessage(`I'm getting an error in ${activePath}. Here's my code:\n\n${content.slice(0, 800)}\n\n${runError ? `Preview error: ${runError}` : "Help me understand what may be wrong and how to fix it."}`, "DEBUG");
+                      }}
                       className="px-2 py-1 rounded bg-rose-950/60 hover:bg-rose-950/80 text-rose-300 border border-rose-800/50 transition-colors cursor-pointer"
                       title="Debug a specific error with your code"
                     >
@@ -1452,8 +2524,11 @@ export default function BuildOS({ problemId, productName: propName, problemData,
                     {buildMode !== "guided" && (
                       <button
                         type="button"
-                        onClick={() => sendNovaMessage(`Review my implementation in ${activePath} for ${activeMission.title}. Here's my code:\n\n${content.slice(0, 800)}`)}
-                        className="px-2 py-1 rounded bg-teal-950/60 hover:bg-teal-950/80 text-teal-300 border border-teal-800/50 transition-colors cursor-pointer"
+                        onClick={() => {
+                          setNovaMode("VERIFY");
+                          void sendNovaMessage(`Review my implementation in ${activePath} for ${activeMission.title}. Here's my code:\n\n${content.slice(0, 800)}\n\nAvailable local validation: ${validationResult ? (validationResult.ok ? "passed" : validationResult.failures.join("; ")) : "not run"}`, "VERIFY");
+                        }}
+                        className="px-2 py-1 rounded bg-green-950/60 hover:bg-green-950/80 text-green-300 border border-green-800/50 transition-colors cursor-pointer"
                         title="Get a code review"
                       >
                         🔍 Review
@@ -1468,83 +2543,89 @@ export default function BuildOS({ problemId, productName: propName, problemData,
                 </div>
               </div>
 
-              {/* Chat Stream & Code Proposals */}
-              <div className="flex-1 overflow-y-auto p-3 space-y-3 min-h-0 bg-[#080a0f]">
-                {novaMessages.map((msg, i) => {
-                  const proposals = msg.role === "assistant" ? parseNovaProposals(msg.content) : [];
+              {/* Independently scrolling conversation */}
+              <div
+                ref={chatScrollRef}
+                onScroll={(event) => {
+                  const container = event.currentTarget;
+                  shouldAutoScrollChatRef.current =
+                    container.scrollHeight - container.scrollTop - container.clientHeight < 96;
+                }}
+                aria-label="Nova conversation"
+                aria-live="polite"
+                className="order-4 min-h-0 flex-1 space-y-3 overflow-y-auto overscroll-contain bg-[#090B0A] p-3"
+              >
+                {implementationPlan && <NovaImplementationPlanCard plan={implementationPlan} />}
+                {displayedNovaMessages.map((msg, i) => {
+                  const proposals = msg.role === "assistant" ? parseNovaProposals(msg.content, i) : [];
+                  const proposalSteps = msg.content.match(/^\s*\d+[.)]\s+(.+)$/gm)?.map((step) => step.replace(/^\s*\d+[.)]\s+/, "")) || [];
+                  const proposalExplanation = proposals.length
+                    ? msg.content
+                        .replace(/```[\s\S]*?```/g, "\n")
+                        .split(/\n\s*\n/)
+                        .map((paragraph) => paragraph.trim())
+                        .find((paragraph) =>
+                          paragraph &&
+                          !/^(?:#{1,4}\s|(?:[-*+•✓]|\d+[.)])\s|Files affected:)/i.test(paragraph)
+                        )
+                        ?.replace(/^#{1,4}\s+/, "")
+                        .replace(/\s+/g, " ")
+                        .trim()
+                        .slice(0, 320) || ""
+                    : "";
                   return (
-                    <div key={i} className="space-y-2">
+                    <div key={i} className={`flex flex-col gap-2 ${msg.role === "user" ? "items-end" : "items-stretch"}`}>
                       <div
                         className={`p-2.5 rounded-lg text-xs leading-relaxed ${
                           msg.role === "user"
-                            ? "bg-teal-950/60 border border-teal-800/60 text-teal-100 ml-4"
-                            : "bg-zinc-900/60 border border-zinc-800/60 text-zinc-200"
+                            ? "ml-8 max-w-[90%] border border-emerald-800/60 bg-emerald-950/50 text-emerald-50"
+                            : "w-full border border-zinc-800/80 bg-[#121613] text-zinc-200"
                         }`}
                       >
-                        <p className="whitespace-pre-wrap">{msg.content}</p>
+                        <NovaMessageContent content={msg.content} omitCodeBlocks={proposals.length > 0} />
                       </div>
 
                       {/* Render Interactive Code Proposals */}
+                      {proposals.length > 0 && (
+                        <NovaImplementationCard
+                          objective={activeMission.title}
+                          steps={proposalSteps}
+                          files={proposals.map((proposal) => proposal.filePath)}
+                          explanation={proposalExplanation}
+                          expectedOutcome={activeMission.whatThisMeans}
+                        />
+                      )}
                       {proposals.map((prop) => {
-                        const isApplied = appliedProposals.has(prop.id);
                         return (
-                          <div
+                          <CodeProposal
                             key={prop.id}
-                            className="bg-[#0b0e17] border border-teal-800/60 rounded-xl p-3 space-y-2.5 shadow-md ml-1"
-                          >
-                            <div className="flex items-center justify-between">
-                              <div className="flex items-center gap-1.5 text-teal-400 font-mono text-[11px] font-semibold">
-                                <FileCode className="h-3.5 w-3.5 text-teal-400" />
-                                <span>{prop.filePath}</span>
-                              </div>
-                              <span className="text-[9px] font-mono uppercase px-1.5 py-0.5 rounded bg-teal-950 text-teal-300 border border-teal-800/50">
-                                Code Proposal
-                              </span>
-                            </div>
-
-                            <div className="bg-[#05070a] border border-zinc-800/80 rounded-lg p-2 max-h-32 overflow-y-auto font-mono text-[10px] text-zinc-300">
-                              <pre>{prop.code.slice(0, 250)}{prop.code.length > 250 ? "\n..." : ""}</pre>
-                            </div>
-
-                            <div className="flex items-center gap-2 pt-0.5">
-                              {isApplied ? (
-                                <div className="flex items-center gap-1.5 text-xs text-emerald-400 font-semibold bg-emerald-950/60 border border-emerald-800/60 px-3 py-1.5 rounded-lg w-full justify-center">
-                                  <Check className="h-3.5 w-3.5 stroke-[3]" />
-                                  <span>Applied to Workspace</span>
-                                </div>
-                              ) : (
-                                <>
-                                  <button
-                                    type="button"
-                                    onClick={() => applyNovaProposal(prop)}
-                                    className="flex-1 flex items-center justify-center gap-1.5 bg-emerald-500 hover:bg-emerald-400 text-zinc-950 font-bold px-3 py-1.5 rounded-lg text-xs transition-colors shadow cursor-pointer"
-                                  >
-                                    <Check className="h-3.5 w-3.5 stroke-[3]" />
-                                    <span>Apply Changes</span>
-                                  </button>
-                                  <button
-                                    type="button"
-                                    onClick={() => setAppliedProposals((prev) => new Set(prev).add(prop.id))}
-                                    className="px-2.5 py-1.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded-lg text-xs transition-colors cursor-pointer"
-                                  >
-                                    Reject
-                                  </button>
-                                </>
-                              )}
-                            </div>
-                          </div>
+                            filePath={prop.filePath}
+                            code={prop.code}
+                            baseContent={proposalBases[prop.id]}
+                            baseError={proposalBaseErrors[prop.id]}
+                            status={proposalStatuses[prop.id] || "pending"}
+                            applying={applyingProposal === prop.id}
+                            onApply={() => applyNovaProposal(prop)}
+                            onReject={() => rejectNovaProposal(prop.filePath, prop.id)}
+                            onRequestRevision={() => {
+                              rejectNovaProposal(prop.filePath, prop.id);
+                              void sendNovaMessage(
+                                `Please revise the proposal for ${prop.filePath}. Keep the change focused and explain what you changed.`,
+                                "BUILD"
+                              );
+                            }}
+                          />
                         );
                       })}
                     </div>
                   );
                 })}
                 {novaLoading && (
-                  <div className="flex items-center gap-2 p-2 text-xs text-zinc-400">
-                    <Loader2 className="h-3.5 w-3.5 animate-spin text-teal-400" />
+                  <div className="flex items-center gap-2 rounded-md border border-zinc-800/80 bg-[#121613] p-2.5 text-xs text-zinc-400">
+                    <Loader2 className="h-3.5 w-3.5 animate-spin text-green-400" />
                     <span>Nova is thinking...</span>
                   </div>
                 )}
-                <div ref={chatBottomRef} />
               </div>
             </aside>
           )}

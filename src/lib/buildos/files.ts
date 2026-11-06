@@ -1,4 +1,5 @@
 import fs from "fs";
+import { scanWorkspaceTreeBounded } from "./boundedWorkspaceTree";
 import path from "path";
 import {
   ensureDir,
@@ -44,8 +45,32 @@ export type WorkspaceFileNode =
   | { type: "file"; name: string; path: string }
   | { type: "dir"; name: string; path: string; children: WorkspaceFileNode[] };
 
+export type WorkspaceTreeLimits = {
+  maxDepth: number;
+  maxFiles: number;
+  maxEntries: number;
+};
+
+export type BoundedWorkspaceTree = {
+  tree: WorkspaceFileNode[];
+  fileCount: number;
+  truncated: boolean;
+};
+
 export function listWorkspaceTree(root: string): WorkspaceFileNode[] {
   return readDirNodes(root, "");
+}
+
+export function listWorkspaceTreeBounded(
+  root: string,
+  limits: WorkspaceTreeLimits
+): BoundedWorkspaceTree {
+  const result = scanWorkspaceTreeBounded(root, limits, isEditableRelativePath, SKIP_TREE);
+  return {
+    tree: result.tree,
+    fileCount: result.fileCount,
+    truncated: result.truncated,
+  };
 }
 
 function readDirNodes(absDir: string, rel: string): WorkspaceFileNode[] {
@@ -71,12 +96,27 @@ function readDirNodes(absDir: string, rel: string): WorkspaceFileNode[] {
   return nodes;
 }
 
-export function readWorkspaceTextFile(root: string, relativePath: string): string {
+export function readWorkspaceTextFile(
+  root: string,
+  relativePath: string,
+  maxBytes?: number
+): string {
   if (!isEditableRelativePath(relativePath)) {
     throw new Error("File type not allowed");
   }
   const abs = resolveWorkspaceFile(root, relativePath);
   if (!fs.existsSync(abs)) throw new Error("File not found");
+  if (maxBytes !== undefined) {
+    const byteLimit = Math.max(0, Math.min(Math.floor(maxBytes), 1_000_000));
+    const descriptor = fs.openSync(abs, "r");
+    try {
+      const buffer = Buffer.alloc(byteLimit);
+      const bytesRead = fs.readSync(descriptor, buffer, 0, byteLimit, 0);
+      return buffer.subarray(0, bytesRead).toString("utf8");
+    } finally {
+      fs.closeSync(descriptor);
+    }
+  }
   return fs.readFileSync(abs, "utf8");
 }
 

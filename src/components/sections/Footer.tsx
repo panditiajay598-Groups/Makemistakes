@@ -1,6 +1,7 @@
 "use client";
 
 import React from "react";
+import Link from "next/link";
 import { Terminal, Github, Twitter, Linkedin } from "lucide-react";
 
 export default function Footer() {
@@ -45,9 +46,13 @@ export default function Footer() {
           <div className="space-y-3 text-xs">
             <h4 className="font-bold text-zinc-900 uppercase font-mono tracking-wider">Legal</h4>
             <ul className="space-y-2">
-              <li><a href="#" className="hover:text-zinc-900 transition-colors">Privacy Policy</a></li>
-              <li><a href="#" className="hover:text-zinc-900 transition-colors">Terms of Service</a></li>
-              <li><a href="#" className="hover:text-zinc-900 transition-colors">Security Audit</a></li>
+              <li><Link href="/privacy-policy" className="hover:text-zinc-900 transition-colors">Privacy Policy</Link></li>
+              <li><Link href="/terms-and-conditions" className="hover:text-zinc-900 transition-colors">Terms & Conditions</Link></li>
+              <li><Link href="/refund-policy" className="hover:text-zinc-900 transition-colors">Refund Policy</Link></li>
+              <li><Link href="/cookie-policy" className="hover:text-zinc-900 transition-colors">Cookie Policy</Link></li>
+              <li><Link href="/acceptable-use-policy" className="hover:text-zinc-900 transition-colors">Acceptable Use</Link></li>
+              <li><Link href="/ai-usage-policy" className="hover:text-zinc-900 transition-colors">AI Usage Policy</Link></li>
+              <li><Link href="/grievance-redressal" className="hover:text-zinc-900 transition-colors">Grievance Redressal</Link></li>
             </ul>
           </div>
         </div>

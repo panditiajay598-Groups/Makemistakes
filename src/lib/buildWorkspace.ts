@@ -10,6 +10,7 @@ import {
 
 export interface BuildMission {
   id: number;
+  dependsOn?: number[];
   title: string;
   subtitle: string;
   time: string;
@@ -723,6 +724,7 @@ export function deriveBuildWorkspace(problemData?: ProblemData | null): BuildWor
     fileContents[task.id] = built.files;
     return {
       id: task.id,
+      dependsOn: task.dependsOn,
       title: task.title,
       subtitle: task.ownership === "provided" ? "Provided for you" : "Your write step",
       time: estimateTime(task.ownership),

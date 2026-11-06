@@ -19,6 +19,8 @@ export interface ProblemBuildTask {
   validationCriteria?: string[];
   hints?: string[];
   connectedTo?: string[];
+  /** Numeric BuildOS mission IDs that must be completed before this task. */
+  dependsOn?: number[];
 }
 
 export interface ProblemBuildSpec {
@@ -324,4 +326,3 @@ export function getProblemContent(problemData?: ProblemData | null): ProblemCont
     questions,
   };
 }
-

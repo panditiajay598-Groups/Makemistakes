@@ -9,7 +9,6 @@ import {
   CheckCircle2,
   ShieldCheck,
   Zap,
-  Sparkles,
   HelpCircle,
   ArrowRight,
   Lock,
@@ -45,23 +44,23 @@ export default function PricingPage() {
   };
 
   return (
-    <div className="min-h-screen bg-zinc-950 text-zinc-100 font-sans selection:bg-teal-500/30 selection:text-white flex flex-col">
+    <div className="min-h-screen bg-[#FAF9F5] text-zinc-900 font-sans selection:bg-teal-500/30 selection:text-white flex flex-col">
       <Navbar />
 
       <main className="flex-1 pt-28 pb-20 px-4 sm:px-6 lg:px-8 max-w-7xl mx-auto w-full">
         {/* Header Section */}
         <div className="text-center max-w-3xl mx-auto space-y-4 mb-16">
-          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-teal-500/10 border border-teal-500/20 text-teal-400 text-xs font-mono">
+          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-teal-100 border border-teal-200 text-teal-800 text-xs font-mono">
             <ShieldCheck className="w-3.5 h-3.5" />
             <span>Account-Bound & Recruiter-Verified Subscriptions</span>
           </div>
 
-          <h1 className="text-3xl sm:text-5xl font-black font-serif text-white tracking-tight">
+          <h1 className="text-3xl sm:text-5xl font-black font-serif text-zinc-900 tracking-tight">
             Prove by Shipping. <br />
-            <span className="text-teal-400">Invest in Real Proof of Work.</span>
+            <span className="text-teal-700">Invest in Real Proof of Work.</span>
           </h1>
 
-          <p className="text-sm sm:text-base text-zinc-400 leading-relaxed font-sans">
+          <p className="text-sm sm:text-base text-zinc-600 leading-relaxed font-sans">
             Choose the level of AI mentoring, concurrency load testing, and verified recruiter
             visibility you need to transition from student to startup engineer.
           </p>
@@ -79,43 +78,43 @@ export default function PricingPage() {
                 key={plan.id}
                 className={`relative rounded-3xl p-8 flex flex-col justify-between transition-all duration-200 ${
                   isHighlighted
-                    ? "bg-zinc-900/90 border-2 border-teal-500/60 shadow-2xl shadow-teal-500/10"
-                    : "bg-zinc-900/50 border border-zinc-800 hover:border-zinc-700"
+                    ? "bg-white border-2 border-teal-600/60 shadow-xl shadow-teal-900/10"
+                    : "bg-white border border-zinc-200 shadow-sm hover:border-zinc-300"
                 }`}
               >
                 {isHighlighted && (
-                  <div className="absolute -top-3.5 left-1/2 -translate-x-1/2 px-4 py-1 rounded-full bg-teal-600 text-white font-mono text-[11px] font-bold uppercase tracking-wider shadow-md">
+                  <div className="absolute -top-3.5 left-1/2 -translate-x-1/2 px-4 py-1 rounded-full bg-teal-700 text-white font-mono text-[11px] font-bold uppercase tracking-wider shadow-md">
                     {plan.badge}
                   </div>
                 )}
 
                 <div>
                   <div className="flex items-center justify-between mb-4">
-                    <span className="text-xs font-mono font-bold uppercase tracking-wider text-teal-400">
+                    <span className="text-xs font-mono font-bold uppercase tracking-wider text-teal-800">
                       {plan.badge}
                     </span>
                     {isCurrent && (
-                      <span className="text-[10px] font-mono bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 px-2 py-0.5 rounded-full font-bold">
+                      <span className="text-[10px] font-mono bg-emerald-50 text-emerald-700 border border-emerald-200 px-2 py-0.5 rounded-full font-bold">
                         Current Plan
                       </span>
                     )}
                   </div>
 
-                  <h3 className="text-2xl font-bold font-serif text-white">{plan.name}</h3>
-                  <p className="text-xs text-zinc-400 mt-2 min-h-[36px] leading-relaxed">
+                  <h3 className="text-2xl font-bold font-serif text-zinc-900">{plan.name}</h3>
+                  <p className="text-xs text-zinc-600 mt-2 min-h-[36px] leading-relaxed">
                     {plan.description}
                   </p>
 
-                  <div className="mt-6 mb-8 pb-6 border-b border-zinc-800">
+                  <div className="mt-6 mb-8 pb-6 border-b border-zinc-200">
                     <div className="flex items-baseline gap-1">
-                      <span className="text-4xl font-black font-mono text-white">
+                      <span className="text-4xl font-black font-mono text-zinc-900">
                         ₹{plan.price.toLocaleString("en-IN")}
                       </span>
-                      <span className="text-xs font-mono text-zinc-400">
+                      <span className="text-xs font-mono text-zinc-500">
                         / {plan.billingPeriod}
                       </span>
                     </div>
-                    <div className="mt-2 text-xs font-mono text-teal-400/90 flex items-center gap-1.5">
+                    <div className="mt-2 text-xs font-mono text-teal-800 flex items-center gap-1.5">
                       <Zap className="w-3.5 h-3.5" />
                       <span>{plan.aiCreditsPerMonth.toLocaleString()} AI Credits / mo</span>
                     </div>
@@ -123,13 +122,13 @@ export default function PricingPage() {
 
                   {/* Feature List */}
                   <div className="space-y-3 mb-8">
-                    <span className="text-[11px] font-mono text-zinc-400 uppercase font-bold tracking-wider block">
+                    <span className="text-[11px] font-mono text-zinc-500 uppercase font-bold tracking-wider block">
                       What&apos;s included:
                     </span>
                     <ul className="space-y-2.5">
                       {plan.features.map((feature, i) => (
-                        <li key={i} className="flex items-start gap-2.5 text-xs text-zinc-300">
-                          <CheckCircle2 className="w-4 h-4 text-teal-400 shrink-0 mt-0.5" />
+                        <li key={i} className="flex items-start gap-2.5 text-xs text-zinc-700">
+                          <CheckCircle2 className="w-4 h-4 text-teal-700 shrink-0 mt-0.5" />
                           <span className="leading-tight">{feature}</span>
                         </li>
                       ))}
@@ -143,10 +142,10 @@ export default function PricingPage() {
                   disabled={isCurrent}
                   className={`w-full py-3.5 rounded-2xl font-semibold text-xs tracking-wide transition-all cursor-pointer flex items-center justify-center gap-2 ${
                     isCurrent
-                      ? "bg-zinc-800 text-zinc-500 cursor-default"
+                      ? "bg-zinc-100 text-zinc-500 cursor-default"
                       : isHighlighted
-                      ? "bg-teal-600 hover:bg-teal-500 text-white shadow-lg shadow-teal-600/20"
-                      : "bg-zinc-800 hover:bg-zinc-700 text-zinc-200"
+                      ? "bg-teal-700 hover:bg-teal-800 text-white shadow-lg shadow-teal-700/20"
+                      : "bg-zinc-100 hover:bg-zinc-200 text-zinc-800"
                   }`}
                 >
                   {isCurrent ? (
@@ -166,57 +165,57 @@ export default function PricingPage() {
         </div>
 
         {/* Security & Isolation FAQ */}
-        <div className="max-w-3xl mx-auto space-y-6 pt-10 border-t border-zinc-800">
+        <div className="max-w-3xl mx-auto space-y-6 pt-10 border-t border-zinc-200">
           <div className="text-center space-y-2">
-            <h2 className="text-2xl font-bold font-serif text-white">
+            <h2 className="text-2xl font-bold font-serif text-zinc-900">
               Billing Security & Account Entitlement FAQ
             </h2>
-            <p className="text-xs text-zinc-400">
+            <p className="text-xs text-zinc-600">
               Clear answers on how payments and subscriptions operate on MakeMistakes.
             </p>
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <div className="p-5 rounded-2xl bg-zinc-900/60 border border-zinc-800 space-y-2">
-              <h4 className="text-sm font-bold text-white font-serif flex items-center gap-2">
-                <ShieldCheck className="w-4 h-4 text-teal-400" />
+            <div className="p-5 rounded-2xl bg-white border border-zinc-200 shadow-sm space-y-2">
+              <h4 className="text-sm font-bold text-zinc-900 font-serif flex items-center gap-2">
+                <ShieldCheck className="w-4 h-4 text-teal-700" />
                 <span>Account-Bound Isolation</span>
               </h4>
-              <p className="text-xs text-zinc-400 leading-relaxed">
+              <p className="text-xs text-zinc-600 leading-relaxed">
                 When you purchase a plan, it is cryptographically attached to your internal account
                 ID. No other browser, device, or user can hijack your subscription benefits.
               </p>
             </div>
 
-            <div className="p-5 rounded-2xl bg-zinc-900/60 border border-zinc-800 space-y-2">
-              <h4 className="text-sm font-bold text-white font-serif flex items-center gap-2">
-                <Zap className="w-4 h-4 text-amber-400" />
+            <div className="p-5 rounded-2xl bg-white border border-zinc-200 shadow-sm space-y-2">
+              <h4 className="text-sm font-bold text-zinc-900 font-serif flex items-center gap-2">
+                <Zap className="w-4 h-4 text-amber-600" />
                 <span>AI Credits & Expiration</span>
               </h4>
-              <p className="text-xs text-zinc-400 leading-relaxed">
+              <p className="text-xs text-zinc-600 leading-relaxed">
                 Your credits are allocated immediately upon verified payment. If your subscription
                 expires, you gracefully fall back to the Free Community Tier without losing your
                 work.
               </p>
             </div>
 
-            <div className="p-5 rounded-2xl bg-zinc-900/60 border border-zinc-800 space-y-2">
-              <h4 className="text-sm font-bold text-white font-serif flex items-center gap-2">
-                <Lock className="w-4 h-4 text-teal-400" />
+            <div className="p-5 rounded-2xl bg-white border border-zinc-200 shadow-sm space-y-2">
+              <h4 className="text-sm font-bold text-zinc-900 font-serif flex items-center gap-2">
+                <Lock className="w-4 h-4 text-teal-700" />
                 <span>Changing Your Email</span>
               </h4>
-              <p className="text-xs text-zinc-400 leading-relaxed">
+              <p className="text-xs text-zinc-600 leading-relaxed">
                 If you update your verified email address, your subscription remains active because
                 it is bound to your immutable internal account ID.
               </p>
             </div>
 
-            <div className="p-5 rounded-2xl bg-zinc-900/60 border border-zinc-800 space-y-2">
-              <h4 className="text-sm font-bold text-white font-serif flex items-center gap-2">
-                <HelpCircle className="w-4 h-4 text-zinc-400" />
+            <div className="p-5 rounded-2xl bg-white border border-zinc-200 shadow-sm space-y-2">
+              <h4 className="text-sm font-bold text-zinc-900 font-serif flex items-center gap-2">
+                <HelpCircle className="w-4 h-4 text-zinc-500" />
                 <span>Refunds & Cancellations</span>
               </h4>
-              <p className="text-xs text-zinc-400 leading-relaxed">
+              <p className="text-xs text-zinc-600 leading-relaxed">
                 You can cancel at any time. When a refund is processed by our billing team, access is
                 safely reverted without touching any of your saved project repositories.
               </p>

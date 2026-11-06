@@ -2,17 +2,24 @@ import { NextResponse } from "next/server";
 import { getDb } from "@/lib/mongodb";
 import { sortProblemsNumerically } from "@/lib/problemId";
 import { applyNoStoreHeaders } from "@/lib/cacheHeaders";
+import { getAuthenticatedIdentity } from "@/lib/security/sessionIdentity";
 
 export async function GET(req: Request) {
   try {
+    const identity = await getAuthenticatedIdentity(req);
+    if (!identity) {
+      return applyNoStoreHeaders(
+        NextResponse.json({ error: "Authentication required" }, { status: 401 })
+      );
+    }
+
     if (!process.env.DATABASE_URL) {
       return applyNoStoreHeaders(
         NextResponse.json({ error: "DATABASE_URL is not configured" }, { status: 500 })
       );
     }
 
-    const { searchParams } = new URL(req.url);
-    const userId = (searchParams.get("userId") || "default_user").toString().trim().toLowerCase();
+    const userIdFilter = { $in: identity.userIds };
 
     const db = await getDb();
     const problemsCollection = db.collection("problems");
@@ -22,13 +29,13 @@ export async function GET(req: Request) {
     // Fetch user completions, catalog problems, and active journeys in parallel
     const [completedDocs, allProblems, activeJourneys] = await Promise.all([
       completionsCollection
-        .find({ userId }, { projection: { problemId: 1 } })
+        .find(userIdFilter, { projection: { problemId: 1 } })
         .toArray(),
       problemsCollection
         .find({}, { projection: { problemId: 1, title: 1, category: 1, learning: 1, difficulty: 1 } })
         .toArray(),
       userJourneysCollection
-        .find({ userId, status: "in_progress" })
+        .find({ ...userIdFilter, status: "in_progress" })
         .sort({ updatedAt: -1, lastActivityAt: -1 })
         .toArray(),
     ]);

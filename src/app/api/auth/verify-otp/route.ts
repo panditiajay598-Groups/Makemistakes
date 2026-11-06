@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { OTPService } from "@backend/services/otp.service";
 import { applyNoStoreHeaders } from "@/lib/cacheHeaders";
+import { publicOtpError } from "@/lib/security/otpSecurity";
 
 export async function POST(req: Request) {
   try {
@@ -50,15 +51,18 @@ export async function POST(req: Request) {
         ...(redirectTo ? { redirectTo } : {}),
       })
     );
-  } catch (error: any) {
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "";
+    const publicError = publicOtpError(message, "verify");
+    if (publicError.status !== 429) console.error("OTP verification failed:", error);
     return applyNoStoreHeaders(
       NextResponse.json(
         {
           success: false,
           verified: false,
-          message: error.message || "OTP verification failed.",
+          message: publicError.message,
         },
-        { status: 400 }
+        { status: publicError.status }
       )
     );
   }

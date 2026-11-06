@@ -1,14 +1,13 @@
 import { NextResponse } from "next/server";
-import nodemailer from "nodemailer";
-import { getOrCreateTransporter } from "@/lib/emailTransporter";
-import { saveCode } from "@/lib/codeStore";
+import { OTPService } from "@backend/services/otp.service";
 import { applyNoStoreHeaders } from "@/lib/cacheHeaders";
+import { otpSuccessPayload, publicOtpError } from "@/lib/security/otpSecurity";
 
 export async function POST(req: Request) {
   try {
-    const { email } = await req.json();
-
-    if (!email || typeof email !== "string" || !/\S+@\S+\.\S+/.test(email)) {
+    const body = await req.json();
+    const email = body?.email;
+    if (typeof email !== "string" || !/\S+@\S+\.\S+/.test(email.trim())) {
       return applyNoStoreHeaders(
         NextResponse.json(
           { success: false, message: "Please provide a valid email address." },
@@ -17,131 +16,29 @@ export async function POST(req: Request) {
       );
     }
 
-    // Generate random 6-digit code
-    const code = Math.floor(100000 + Math.random() * 900000).toString();
-    saveCode(email, code);
-
-    const smtpHost = process.env.SMTP_HOST || "smtp.gmail.com";
-    const rawPort = process.env.SMTP_PORT || "465";
-    const smtpPort = parseInt(rawPort, 10);
-    const smtpUser = process.env.SMTP_USER;
-    const smtpPass = process.env.SMTP_PASS;
-    const smtpSecure = process.env.SMTP_SECURE === "true" || (rawPort === "465" && process.env.SMTP_SECURE !== "false");
-
-    const appBaseUrl = process.env.NEXT_PUBLIC_APP_URL || process.env.APP_URL || "http://localhost:3000";
-
-    const emailTemplate = (targetEmail: string, verificationCode: string) => {
-      const redirectUrl = `${appBaseUrl}/auth/verify?email=${encodeURIComponent(targetEmail)}&code=${encodeURIComponent(verificationCode)}`;
-      const fromHeader = process.env.SMTP_FROM || `"MakeMistakes Team" <support@makemistakes.in>`;
-      return {
-        from: fromHeader,
-        replyTo: process.env.REPLY_TO || "support@makemistakes.in",
-        to: targetEmail,
-        subject: `${verificationCode} is your MakeMistakes Verification Code`,
-        html: `
-          <div style="font-family: Arial, sans-serif; background-color: #09090b; color: #f4f4f5; padding: 32px; border-radius: 8px; max-width: 480px; margin: 0 auto; border: 1px solid #27272a;">
-            <h2 style="color: #f59e0b; margin-top: 0;">MakeMistakes Verification</h2>
-            <p style="color: #a1a1aa; font-size: 14px;">Use the following 6-digit security code or click the button below to verify your account:</p>
-            <div style="background-color: #18181b; padding: 16px; border-radius: 6px; text-align: center; margin: 20px 0; border: 1px solid #3f3f46;">
-              <span style="font-family: monospace; font-size: 32px; font-weight: bold; letter-spacing: 8px; color: #f59e0b;">${verificationCode}</span>
-            </div>
-            <div style="text-align: center; margin: 24px 0;">
-              <a href="${redirectUrl}" target="_blank" style="display: inline-block; background-color: #f59e0b; color: #09090b; font-weight: bold; font-size: 14px; text-decoration: none; padding: 12px 24px; border-radius: 6px;">
-                Verify Email &amp; Complete Login &rarr;
-              </a>
-            </div>
-            <p style="color: #71717a; font-size: 12px;">This code will expire in 10 minutes. If you did not request this code, please ignore this email.</p>
-          </div>
-        `,
-      };
-    };
-
-    // Try custom/Gmail SMTP first if credentials are in .env.local
-    if (smtpUser && smtpPass && !smtpPass.includes("Tarak@renu")) {
-      try {
-        const transporter = getOrCreateTransporter({
-          host: smtpHost,
-          port: smtpPort,
-          secure: smtpSecure,
-          auth: {
-            user: smtpUser,
-            pass: smtpPass,
-          },
-          connectionTimeout: 8000,
-        });
-
-        await transporter.sendMail(emailTemplate(email, code));
-
-        return applyNoStoreHeaders(
-          NextResponse.json({
-            success: true,
-            mode: "smtp",
-            ...(process.env.NODE_ENV === "development" ? { code } : {}),
-            message: `Verification code sent to ${email} via SMTP!`,
-          })
-        );
-      } catch (smtpErr: any) {
-        console.warn("[MakeMistakes SMTP Custom Warning]:", smtpErr?.message);
-        // Fall through to Ethereal Test Inbox
-      }
+    const result = await OTPService.sendOTP(email);
+    return applyNoStoreHeaders(
+      NextResponse.json({
+        ...otpSuccessPayload(
+          { devOtp: result.devOtp, previewUrl: result.previewUrl },
+          process.env,
+          "development"
+        ),
+        ...(process.env.NODE_ENV === "development" && result.devOtp
+          ? { code: result.devOtp }
+          : {}),
+      })
+    );
+  } catch (error) {
+    const code = error instanceof Error ? error.message : "";
+    const publicError = publicOtpError(code, "send");
+    if (!code.startsWith("OTP_RATE_LIMIT:") && !code.startsWith("EMAIL_DELIVERY_FAILED:")) {
+      console.error("Error in /api/auth/send-code:", error);
     }
-
-    // Option B: Ethereal Automatic Test Inbox
-    try {
-      const testAccount = await nodemailer.createTestAccount();
-      const etherealTransporter = getOrCreateTransporter({
-        host: "smtp.ethereal.email",
-        port: 587,
-        secure: false,
-        auth: {
-          user: testAccount.user,
-          pass: testAccount.pass,
-        },
-      });
-
-      const info = await etherealTransporter.sendMail(emailTemplate(email, code));
-      const previewUrl = nodemailer.getTestMessageUrl(info);
-
-      if (process.env.NODE_ENV !== "production") {
-        console.log(`\n==============================================`);
-        console.log(`[Ethereal Test Inbox Email Dispatched]`);
-        console.log(`To: ${email}`);
-        console.log(`Code: [ ${code} ]`);
-        console.log(`Preview URL: ${previewUrl}`);
-        console.log(`==============================================\n`);
-      }
-
-      return applyNoStoreHeaders(
-        NextResponse.json({
-          success: true,
-          mode: "ethereal",
-          ...(process.env.NODE_ENV === "development" ? { code } : {}),
-          previewUrl: previewUrl || undefined,
-          message: `Verification email sent! Click 'View Email in Test Inbox' to see the message.`,
-        })
-      );
-    } catch (etherealErr: any) {
-      console.error("Ethereal Test Inbox error:", etherealErr);
-
-      // Ultimate fallback
-      return applyNoStoreHeaders(
-        NextResponse.json({
-          success: true,
-          mode: "dev",
-          ...(process.env.NODE_ENV === "development" ? { code } : {}),
-          message: `Demo mode: Verification Code generated for ${email}.`,
-        })
-      );
-    }
-  } catch (error: any) {
-    console.error("Error in /api/auth/send-code:", error);
     return applyNoStoreHeaders(
       NextResponse.json(
-        {
-          success: false,
-          message: "Failed to process verification code. Please try again.",
-        },
-        { status: 500 }
+        { success: false, message: publicError.message },
+        { status: publicError.status }
       )
     );
   }

@@ -1,12 +1,13 @@
 import { NextResponse } from "next/server";
 import { OTPService } from "@backend/services/otp.service";
 import { applyNoStoreHeaders } from "@/lib/cacheHeaders";
+import { otpSuccessPayload, publicOtpError } from "@/lib/security/otpSecurity";
 
 export async function POST(req: Request) {
   try {
     const { email, redirectTo } = await req.json();
 
-    if (!email) {
+    if (typeof email !== "string" || !email.trim()) {
       return applyNoStoreHeaders(
         NextResponse.json(
           { success: false, message: "Email is required." },
@@ -18,19 +19,24 @@ export async function POST(req: Request) {
     const result = await OTPService.resendOTP(email, redirectTo);
 
     return applyNoStoreHeaders(
-      NextResponse.json({
-        success: true,
-        message: result.message,
-        ...(result.previewUrl ? { previewUrl: result.previewUrl } : {}),
-        ...(result.devOtp ? { devOtp: result.devOtp } : {}),
-      })
+      NextResponse.json(
+        otpSuccessPayload(
+          { previewUrl: result.previewUrl, devOtp: result.devOtp },
+          process.env,
+          "development"
+        )
+      )
     );
-  } catch (error: any) {
-    const statusCode = error.message?.includes("wait") || error.message?.includes("requests per hour") ? 429 : 400;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "";
+    const publicError = publicOtpError(message, "send");
+    if (!message.startsWith("OTP_RATE_LIMIT:") && !message.startsWith("EMAIL_DELIVERY_FAILED:")) {
+      console.error("Failed to resend OTP:", error);
+    }
     return applyNoStoreHeaders(
       NextResponse.json(
-        { success: false, message: error.message || "Failed to resend OTP." },
-        { status: statusCode }
+        { success: false, message: publicError.message },
+        { status: publicError.status }
       )
     );
   }

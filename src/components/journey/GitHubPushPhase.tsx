@@ -57,6 +57,7 @@ export default function GitHubPushPhase({
   const [isConnected, setIsConnected] = useState(false);
   const [githubUsername, setGithubUsername] = useState<string | null>(null);
   const [githubAvatarUrl, setGithubAvatarUrl] = useState<string | null>(null);
+  const [disconnecting, setDisconnecting] = useState(false);
 
   const [pushState, setPushState] = useState<"IDLE" | "PREPARING" | "COMMITTING" | "PUSHED" | "ERROR">("IDLE");
   const [pushedUrl, setPushedUrl] = useState<string | null>(null);
@@ -156,6 +157,33 @@ npm run dev
     navigator.clipboard.writeText(pushedUrl);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
+  };
+
+  const handleDisconnect = async () => {
+    setDisconnecting(true);
+    setErrorMessage(null);
+    try {
+      const response = await fetch("/api/github/disconnect", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ problemId: pid }),
+      });
+      const result = await response.json();
+      if (!response.ok) {
+        setErrorMessage(result.error || "Failed to disconnect GitHub.");
+        return;
+      }
+
+      setIsConnected(false);
+      setGithubUsername(null);
+      setGithubAvatarUrl(null);
+      setPushedUrl(null);
+      setPushState("IDLE");
+    } catch {
+      setErrorMessage("Network error while disconnecting GitHub.");
+    } finally {
+      setDisconnecting(false);
+    }
   };
 
   return (
@@ -425,6 +453,16 @@ npm run dev
                   <ExternalLink className="h-3.5 w-3.5" /> View on GitHub
                 </a>
               </div>
+            )}
+            {isConnected && (
+              <button
+                type="button"
+                onClick={handleDisconnect}
+                disabled={disconnecting || pushState === "PREPARING" || pushState === "COMMITTING"}
+                className="w-full text-xs text-zinc-400 hover:text-white underline disabled:opacity-50"
+              >
+                {disconnecting ? "Disconnecting..." : "Disconnect GitHub"}
+              </button>
             )}
           </div>
 

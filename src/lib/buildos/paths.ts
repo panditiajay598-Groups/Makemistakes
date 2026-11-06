@@ -9,6 +9,8 @@ import {
 
 import os from "os";
 
+export { resolveWorkspaceFile } from "./workspacePath";
+
 const ROOT = process.cwd();
 
 function isWritable(dir: string): boolean {
@@ -120,22 +122,6 @@ export function resolveTemplateDir(level: BuildLevel = "Beginner"): string {
     throw new Error(`Template missing for ${level}: ${dir}`);
   }
   return dir;
-}
-
-export function resolveWorkspaceFile(workspaceRoot: string, relativePath: string): string {
-  const normalized = relativePath.replace(/\\/g, "/").replace(/^\/+/, "");
-  if (!normalized || normalized.includes("\0")) {
-    throw new Error("Invalid file path");
-  }
-  if (normalized.split("/").some((p) => p === ".." || p === ".")) {
-    throw new Error("Path traversal is not allowed");
-  }
-  const abs = path.resolve(workspaceRoot, normalized);
-  const root = path.resolve(workspaceRoot);
-  if (abs !== root && !abs.startsWith(root + path.sep)) {
-    throw new Error("File is outside workspace");
-  }
-  return abs;
 }
 
 export function isEditableRelativePath(relativePath: string): boolean {

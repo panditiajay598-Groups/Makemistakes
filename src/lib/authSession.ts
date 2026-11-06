@@ -1,8 +1,8 @@
 import crypto from "crypto";
 import { prisma } from "@backend/lib/prisma";
+import { getSessionSecret } from "@/lib/security/sessionSecret";
 
-const SESSION_SECRET =
-  process.env.JWT_ACCESS_SECRET || "makemistakes_secure_session_secret_2026";
+const SESSION_SECRET = getSessionSecret();
 const SESSION_COOKIE_NAME = "makemistakes_session";
 const SESSION_EXPIRY_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
 
@@ -74,15 +74,22 @@ export function verifySessionToken(token: string): SessionPayload | null {
   const [encodedHeader, encodedPayload, signature] = parts;
   const data = `${encodedHeader}.${encodedPayload}`;
 
-  const expectedSignature = crypto
-    .createHmac("sha256", SESSION_SECRET)
-    .update(data)
-    .digest("base64")
-    .replace(/=/g, "")
-    .replace(/\+/g, "-")
-    .replace(/\//g, "_");
-
   try {
+    const header = JSON.parse(base64UrlDecode(encodedHeader)) as { alg?: string };
+    if (header.alg !== "HS256") return null;
+
+    const expectedSignature = crypto
+      .createHmac("sha256", SESSION_SECRET)
+      .update(data)
+      .digest("base64")
+      .replace(/=/g, "")
+      .replace(/\+/g, "-")
+      .replace(/\//g, "_");
+
+    if (Buffer.byteLength(signature) !== Buffer.byteLength(expectedSignature)) {
+      return null;
+    }
+
     const isSigValid = crypto.timingSafeEqual(
       Buffer.from(signature),
       Buffer.from(expectedSignature)
@@ -92,8 +99,16 @@ export function verifySessionToken(token: string): SessionPayload | null {
     const payload: SessionPayload = JSON.parse(base64UrlDecode(encodedPayload));
     const now = Math.floor(Date.now() / 1000);
 
-    if (payload.exp && payload.exp < now) {
-      return null; // Expired
+    if (
+      typeof payload.userId !== "string" ||
+      !payload.userId.trim() ||
+      typeof payload.email !== "string" ||
+      !payload.email.trim() ||
+      typeof payload.iat !== "number" ||
+      typeof payload.exp !== "number" ||
+      payload.exp <= now
+    ) {
+      return null;
     }
 
     return payload;

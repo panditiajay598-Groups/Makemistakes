@@ -1,4 +1,4 @@
-import { APPROVED_BY_LEVEL, BuildLevel } from "./levels";
+import { APPROVED_BY_LEVEL, type BuildLevel } from "./levels";
 
 export type ValidationErrorType =
   | "MISSING_ENTRYPOINT"

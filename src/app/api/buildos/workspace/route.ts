@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
-import { ensureWorkspace, getWorkspaceMeta } from "@/lib/buildos/workspaceService";
+import { ensureWorkspace } from "@/lib/buildos/workspaceService";
+import { getAuthenticatedIdentity } from "@/lib/security/sessionIdentity";
+import { findOwnedWorkspace } from "@/lib/security/workspaceOwnership";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -11,12 +13,15 @@ function bad(message: string, status = 400) {
 /** GET — load existing workspace metadata (no install). */
 export async function GET(req: Request) {
   try {
-    const { searchParams } = new URL(req.url);
-    const userId = searchParams.get("userId")?.trim();
-    const problemId = searchParams.get("problemId")?.trim();
-    if (!userId || !problemId) return bad("userId and problemId are required");
+    const identity = await getAuthenticatedIdentity(req);
+    if (!identity) return bad("Authentication required", 401);
 
-    const meta = await getWorkspaceMeta(userId, problemId);
+    const { searchParams } = new URL(req.url);
+    const problemId = searchParams.get("problemId")?.trim();
+    if (!problemId) return bad("problemId is required");
+
+    const owned = await findOwnedWorkspace(identity, problemId);
+    const meta = owned?.meta;
     if (!meta) return NextResponse.json({ exists: false });
     return NextResponse.json({ exists: true, workspace: meta });
   } catch (err: any) {
@@ -27,12 +32,16 @@ export async function GET(req: Request) {
 /** POST — create or restore workspace + install approved packages. */
 export async function POST(req: Request) {
   try {
+    const identity = await getAuthenticatedIdentity(req);
+    if (!identity) return bad("Authentication required", 401);
+
     const body = await req.json().catch(() => ({}));
-    const userId = String(body.userId || "").trim();
     const problemId = String(body.problemId || "").trim();
     const forceReinstall = Boolean(body.forceReinstall);
-    if (!userId || !problemId) return bad("userId and problemId are required");
+    if (!problemId) return bad("problemId is required");
 
+    const owned = await findOwnedWorkspace(identity, problemId);
+    const userId = owned?.userId || identity.primaryUserId;
     const result = await ensureWorkspace(userId, problemId, { forceReinstall });
 
     return NextResponse.json({

@@ -27,11 +27,12 @@ import PlanPhase from "@/components/journey/PlanPhase";
 import BuildPhase from "@/components/journey/BuildPhase";
 import TestPhase from "@/components/journey/TestPhase";
 import GitHubPushPhase from "@/components/journey/GitHubPushPhase";
+import DeployPhase from "@/components/journey/DeployPhase";
 import ValidatePhase from "@/components/journey/ValidatePhase";
 import PortfolioShowcase from "@/components/journey/PortfolioShowcase";
 import ProblemCompletionModal from "@/components/journey/ProblemCompletionModal";
 
-type JourneyStep = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9;
+type JourneyStep = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10;
 
 function journeyStepStorageKey(userId: string, problemId: string) {
   const cleanUser = (userId || "default_user").toString().trim().toLowerCase();
@@ -43,7 +44,7 @@ function loadJourneyStep(userId: string, problemId: string): JourneyStep {
   try {
     const raw = localStorage.getItem(journeyStepStorageKey(userId, problemId));
     const n = raw ? parseInt(raw, 10) : NaN;
-    if (n >= 1 && n <= 9) return n as JourneyStep;
+    if (n >= 1 && n <= 10) return n as JourneyStep;
   } catch {
     /* ignore */
   }
@@ -153,7 +154,7 @@ export default function GenericProblemJourneyPage() {
             saveJourneyStep(userId, targetId!, 1);
           } else if (urlStep && !isNaN(parseInt(urlStep, 10))) {
             const parsed = parseInt(urlStep, 10);
-            if (parsed >= 1 && parsed <= 9) {
+            if (parsed >= 1 && parsed <= 10) {
               hasExplicitUrlStep = true;
               urlStepVal = parsed as JourneyStep;
             }
@@ -184,8 +185,9 @@ export default function GenericProblemJourneyPage() {
             const uPhases = uData?.phases || {};
 
             const isValidateDone = Boolean(uPhases?.validate?.liveUrl);
-            const isDeployDone = isValidateDone || Boolean(uPhases?.deploy?.githubRepoUrl) || Boolean(uPhases?.deploy?.connected);
-            const isTestDone = isDeployDone || Boolean(uPhases?.test?.finalSummary?.trim()) || (Array.isArray(uPhases?.test?.scenarios) && uPhases.test.scenarios.length > 0);
+            const isDeployDone = isValidateDone || Boolean(uPhases?.deploy?.liveUrl) || Boolean(uPhases?.deploy?.deploymentStatus && uPhases.deploy.deploymentStatus !== "pending");
+            const isPushDone = isDeployDone || Boolean(uPhases?.deploy?.githubRepoUrl) || Boolean(uPhases?.deploy?.isPushed) || Boolean(uPhases?.deploy?.connected);
+            const isTestDone = isPushDone || Boolean(uPhases?.test?.finalSummary?.trim()) || (Array.isArray(uPhases?.test?.scenarios) && uPhases.test.scenarios.length > 0);
             const isBuildDone = isTestDone || uPhases?.build?.status === "completed" || Boolean(uPhases?.build?.completed);
             const isPlanDone = isBuildDone || (Array.isArray(uPhases?.plan?.modules) && uPhases.plan.modules.length > 0);
             const isDesignDone = isPlanDone || Boolean(uPhases?.design?.productGoal?.trim());
@@ -193,12 +195,14 @@ export default function GenericProblemJourneyPage() {
             const isDiscoverDone = isResearchDone || Boolean(uPhases?.discover?.completed);
 
             let maxPhase = 1;
-            if (isDeployDone) maxPhase = 8;
-            else if (isTestDone) maxPhase = 7;
-            else if (isBuildDone) maxPhase = 6;
-            else if (isPlanDone) maxPhase = 5;
-            else if (isDesignDone) maxPhase = 4;
-            else if (isResearchDone) maxPhase = 3;
+            if (isValidateDone) maxPhase = 9;
+            else if (isDeployDone) maxPhase = 8;
+            else if (isPushDone) maxPhase = 7;
+            else if (isTestDone) maxPhase = 6;
+            else if (isBuildDone) maxPhase = 5;
+            else if (isPlanDone) maxPhase = 4;
+            else if (isDesignDone) maxPhase = 3;
+            else if (isResearchDone) maxPhase = 2;
             else if (isDiscoverDone) maxPhase = 2;
 
             if (typeof uData.currentPhase === "number" && uData.currentPhase >= 1 && uData.currentPhase <= 9) {
@@ -208,7 +212,7 @@ export default function GenericProblemJourneyPage() {
               maxPhase = Math.max(maxPhase, uData.maxAllowedPhase);
             }
 
-            unlockedStep = Math.max(1, Math.min(8, maxPhase)) as JourneyStep;
+            unlockedStep = Math.max(1, Math.min(9, maxPhase)) as JourneyStep;
 
             const rawCurrentPhase = typeof uData.currentPhase === "number" ? uData.currentPhase : 1;
             serverStep = Math.max(1, Math.min(unlockedStep, rawCurrentPhase)) as JourneyStep;
@@ -265,7 +269,7 @@ export default function GenericProblemJourneyPage() {
       const urlStep = urlParams.get("step");
       if (urlStep && !isNaN(parseInt(urlStep, 10))) {
         const parsed = parseInt(urlStep, 10);
-        if (parsed >= 1 && parsed <= 9) {
+        if (parsed >= 1 && parsed <= 10) {
           setCurrentStep(parsed as JourneyStep);
         }
       }
@@ -314,10 +318,10 @@ export default function GenericProblemJourneyPage() {
   const userInitial = profile?.whoAreYouRole?.charAt(0)?.toUpperCase() ?? "N";
 
   const nextStep = () => {
-    if (currentStep === 8) {
-      // Phase 8 (Validate) Complete — Handle Problem Completion
+    if (currentStep === 9) {
+      // Phase 9 (Validate) Complete — Handle Problem Completion
       handleCompleteJourney();
-    } else if (currentStep < 9) {
+    } else if (currentStep < 10) {
       const next = (currentStep + 1) as JourneyStep;
       setMaxUnlockedStep((prev) => Math.max(prev, next) as JourneyStep);
       setCurrentStep(next);
@@ -378,8 +382,9 @@ export default function GenericProblemJourneyPage() {
     { number: 4, title: "Plan", subtitle: "Plan the Engineering Work" },
     { number: 5, title: "Build", subtitle: "Build the Product" },
     { number: 6, title: "Test", subtitle: "Validate the Product" },
-    { number: 7, title: "Push to GitHub", subtitle: "Publish Code & Portfolio" },
-    { number: 8, title: "Validate", subtitle: "Deploy & Validate on Vercel" },
+    { number: 7, title: "Push to GitHub", subtitle: "Publish Code to GitHub" },
+    { number: 8, title: "Deploy", subtitle: "Deploy the Product" },
+    { number: 9, title: "Validate", subtitle: "Verify the Deployed Application" },
   ];
 
   return (
@@ -457,7 +462,7 @@ export default function GenericProblemJourneyPage() {
               </span>
               <span className="text-zinc-300">•</span>
               <span className="text-xs font-mono text-zinc-500 font-medium">
-                Phase {currentStep} of 8
+                Phase {currentStep > 9 ? "Complete" : `Phase ${currentStep} of 9`}
               </span>
             </div>
 
@@ -608,8 +613,19 @@ export default function GenericProblemJourneyPage() {
                 />
               )}
 
-              {/* SCREEN 8 — VALIDATE */}
+              {/* SCREEN 8 — DEPLOY */}
               {currentStep === 8 && (
+                <DeployPhase
+                  key={rawId}
+                  userId={userId}
+                  problemData={problemData}
+                  onComplete={nextStep}
+                  onBackToJourney={prevStep}
+                />
+              )}
+
+              {/* SCREEN 9 — VALIDATE */}
+              {currentStep === 9 && (
                 <ValidatePhase
                   key={rawId}
                   userId={userId}
@@ -619,8 +635,8 @@ export default function GenericProblemJourneyPage() {
                 />
               )}
 
-              {/* SCREEN 9 — PORTFOLIO SHOWCASE */}
-              {currentStep === 9 && (
+              {/* SCREEN 10 — PORTFOLIO SHOWCASE (post-completion, not a development phase) */}
+              {currentStep === 10 && (
                 <PortfolioShowcase
                   key={rawId}
                   userId={userId}
