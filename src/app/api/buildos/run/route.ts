@@ -4,6 +4,7 @@ import { readAllEditableFiles, writeWorkspaceTextFile } from "@/lib/buildos/file
 import { buildBuildOsPreviewHtml } from "@/lib/buildos/previewRuntime";
 import { setWorkspaceStatus } from "@/lib/buildos/workspaceService";
 import { validateWorkspaceDependencies } from "@/lib/buildos/validator";
+import { requireAuthenticatedOwner } from "@/lib/buildos/guard";
 
 export const runtime = "nodejs";
 
@@ -14,13 +15,17 @@ export const runtime = "nodejs";
 export async function POST(req: Request) {
   try {
     const body = await req.json();
-    const userId = String(body.userId || "").trim();
+    const requestedUserId = String(body.userId || "").trim();
     const problemId = String(body.problemId || "").trim();
     const runId = body.runId || Date.now();
     const clientFiles = body.files && typeof body.files === "object" ? body.files : null;
 
-    if (!userId || !problemId) {
-      return NextResponse.json({ error: "userId and problemId are required" }, { status: 400 });
+    const auth = await requireAuthenticatedOwner(req, requestedUserId || undefined);
+    if (!auth.ok) return auth.response;
+    const userId = auth.session.userId;
+
+    if (!problemId) {
+      return NextResponse.json({ error: "problemId is required" }, { status: 400 });
     }
 
     const root = workspaceDir(userId, problemId);

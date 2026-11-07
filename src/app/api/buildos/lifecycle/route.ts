@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { setWorkspaceStatus, stopWorkspace } from "@/lib/buildos/workspaceService";
+import { requireAuthenticatedOwner } from "@/lib/buildos/guard";
 
 export const runtime = "nodejs";
 
@@ -7,11 +8,16 @@ export const runtime = "nodejs";
 export async function POST(req: Request) {
   try {
     const body = await req.json();
-    const userId = String(body.userId || "").trim();
+    const requestedUserId = String(body.userId || "").trim();
     const problemId = String(body.problemId || "").trim();
     const action = String(body.action || "stop").trim();
-    if (!userId || !problemId) {
-      return NextResponse.json({ error: "userId and problemId are required" }, { status: 400 });
+
+    const auth = await requireAuthenticatedOwner(req, requestedUserId || undefined);
+    if (!auth.ok) return auth.response;
+    const userId = auth.session.userId;
+
+    if (!problemId) {
+      return NextResponse.json({ error: "problemId is required" }, { status: 400 });
     }
 
     if (action === "archive") {
