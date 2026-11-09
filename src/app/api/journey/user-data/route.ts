@@ -115,11 +115,11 @@ export function computeMaxAllowedPhase(phases: any, currentPhase?: number | null
   if (isValidateDone) maxAllowed = 9;
   else if (isDeployDone) maxAllowed = 8;
   else if (isPushDone) maxAllowed = 7;
-  else if (isTestDone) maxAllowed = 6;
-  else if (isBuildDone) maxAllowed = 5;
-  else if (isPlanDone) maxAllowed = 4;
-  else if (isDesignDone) maxAllowed = 3;
-  else if (isResearchDone) maxAllowed = 2;
+  else if (isTestDone) maxAllowed = 7;
+  else if (isBuildDone) maxAllowed = 6;
+  else if (isPlanDone) maxAllowed = 5;
+  else if (isDesignDone) maxAllowed = 4;
+  else if (isResearchDone) maxAllowed = 3;
   else if (isDiscoverDone) maxAllowed = 2;
 
   // Preserve any higher unlocked phase recorded in the database

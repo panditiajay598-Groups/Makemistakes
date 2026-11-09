@@ -78,6 +78,33 @@ test("phase progression unlocks the next phase based on completed-stage evidence
   );
 });
 
+test("regression: every phase transition (1→2 … 8→9) follows approved unlock ladder", () => {
+  const transitions = [
+    [{ discover: { completed: true } }, 2],
+    [{ research: { sources: [{ title: "s" }] } }, 3],
+    [{ design: { productGoal: "app" } }, 4],
+    [{ plan: { modules: [{ id: 1 }] } }, 5],
+    [{ build: { status: "completed" } }, 6],
+    [{ test: { finalSummary: "done" } }, 7],
+    [{ deploy: { githubRepoUrl: "https://github.com/u/r" } }, 7],
+    [{ deploy: { liveUrl: "https://app.vercel.app" } }, 8],
+    [{ validate: { liveUrl: "https://app.vercel.app" } }, 9],
+  ];
+  for (const [phases, expected] of transitions) {
+    assert.equal(computeMaxAllowedPhase(phases), expected, `unlock for ${JSON.stringify(phases)}`);
+  }
+});
+
+test("regression: incomplete evidence never unlocks the next stage", () => {
+  assert.equal(computeMaxAllowedPhase({ research: { sources: [] } }), 1);
+  assert.equal(computeMaxAllowedPhase({ design: { productGoal: "" } }), 1);
+  assert.equal(computeMaxAllowedPhase({ plan: { modules: [] } }), 1);
+  assert.equal(computeMaxAllowedPhase({ build: { status: "in_progress" } }), 1);
+  assert.equal(computeMaxAllowedPhase({ test: { scenarios: [], finalSummary: "" } }), 1);
+  assert.equal(computeMaxAllowedPhase({ deploy: { connected: false, githubRepoUrl: "" } }), 1);
+  assert.equal(computeMaxAllowedPhase({ validate: { liveUrl: "" } }), 1);
+});
+
 test("GitHub push unlocks Push to GitHub (7) and Deploy (8) but not Validate (9)", () => {
   assert.equal(
     computeMaxAllowedPhase({ deploy: { githubRepoUrl: "https://github.com/u/r" } }),
