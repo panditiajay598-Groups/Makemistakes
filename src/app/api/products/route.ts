@@ -45,8 +45,8 @@ export async function GET(req: Request) {
     if (hasLimitParam && Number.isFinite(rawLimit) && rawLimit > 0) {
       limit = Math.min(100, rawLimit);
     } else {
-      // Default initial request (page 1) to 20 records, subsequent requests without explicit limit to 10 records
-      limit = page === 1 ? 20 : 10;
+      // Default to 20 records for all batches (initial load and subsequent Load More)
+      limit = 20;
     }
 
     // Support optional cursor / explicit skip / offset
@@ -56,16 +56,7 @@ export async function GET(req: Request) {
       const parsedSkip = parseInt(rawSkipParam, 10);
       skip = Number.isFinite(parsedSkip) && parsedSkip >= 0 ? parsedSkip : 0;
     } else {
-      if (page === 1) {
-        skip = 0;
-      } else if (hasLimitParam && limit !== 10) {
-        // Explicit custom fixed page size (e.g. limit=20, limit=50)
-        skip = (page - 1) * limit;
-      } else {
-        // Incremental pagination: initial load (page 1) loads 20 items (0..19),
-        // each subsequent page loads 10 items (page 2 -> skip 20, page 3 -> skip 30, etc.)
-        skip = 20 + (page - 2) * limit;
-      }
+      skip = (page - 1) * limit;
     }
 
     if (!process.env.DATABASE_URL) {
@@ -131,20 +122,41 @@ export async function GET(req: Request) {
       sortObj = { createdAt: 1, problemId: 1 };
     }
 
+    const startTime = performance.now();
+
     // Execute queries in parallel: unlock evaluation (using shared engine), total count, paginated slice
     // Fetch limit + 1 items to determine with exact precision whether another page exists
+    const dbStartTime = performance.now();
     const [unlockData, totalCount, rawProblemsWithExtra] = await Promise.all([
       evaluateUserUnlock(db, hasAuthSession ? userFilter : null),
       problemsCollection.countDocuments(query),
       problemsCollection
         .find(query, {
-          projection: { quiz: 0, metadata: 0, pdfSource: 0 }
+          projection: {
+            _id: 1,
+            problemId: 1,
+            title: 1,
+            problemStatement: 1,
+            problemDescription: 1,
+            description: 1,
+            category: 1,
+            difficulty: 1,
+            "learning.level": 1,
+            country: 1,
+            "source.name": 1,
+            "source.type": 1,
+            "relatedInformation.context": 1,
+            skills: 1,
+            estimatedHours: 1,
+            createdAt: 1,
+          },
         })
         .sort(sortObj)
         .skip(skip)
         .limit(limit + 1)
         .toArray(),
     ]);
+    const dbEndTime = performance.now();
 
     const hasMore = rawProblemsWithExtra.length > limit;
     const rawProblems = hasMore ? rawProblemsWithExtra.slice(0, limit) : rawProblemsWithExtra;
@@ -157,7 +169,7 @@ export async function GET(req: Request) {
       inProgressCount,
     } = unlockData;
 
-    // Map raw problems to product catalog format
+    // Map raw problems to product catalog format with lean payload fields
     const products = rawProblems.map((p: any) => {
       const pid = p.problemId;
       const journey = journeysMap.get(pid);
@@ -199,10 +211,12 @@ export async function GET(req: Request) {
         category: p.category || "Product Challenge",
         difficulty: pDiff,
         country: p.country || null,
-        source: p.source || null,
-        relatedInformation: p.relatedInformation || null,
-        skills: p.skills || [],
-        estimatedHours: p.estimatedHours || null,
+        source: p.source ? { name: p.source.name, type: p.source.type } : null,
+        relatedInformation: p.relatedInformation?.context
+          ? { context: p.relatedInformation.context }
+          : null,
+        skills: Array.isArray(p.skills) ? p.skills : [],
+        estimatedHours: typeof p.estimatedHours === "number" ? p.estimatedHours : null,
         userStatus,
         completedPhases,
         currentPhase,
@@ -213,12 +227,12 @@ export async function GET(req: Request) {
 
     let totalPages = 1;
     if (totalCount > 0) {
-      if (hasLimitParam && limit !== 10) {
-        totalPages = Math.ceil(totalCount / limit) || 1;
-      } else {
-        totalPages = totalCount <= 20 ? 1 : 1 + Math.ceil((totalCount - 20) / 10);
-      }
+      totalPages = Math.ceil(totalCount / limit) || 1;
     }
+
+    const totalEndTime = performance.now();
+    const dbDurationMs = Math.round((dbEndTime - dbStartTime) * 100) / 100;
+    const totalDurationMs = Math.round((totalEndTime - startTime) * 100) / 100;
 
     const response = NextResponse.json({
       success: true,
@@ -226,6 +240,7 @@ export async function GET(req: Request) {
       totalCount,
       page,
       limit,
+      skip,
       totalPages,
       hasMore,
       products,
@@ -233,6 +248,7 @@ export async function GET(req: Request) {
       pagination: {
         page,
         limit,
+        skip,
         totalCount,
         totalPages,
         hasMore,
@@ -244,7 +260,16 @@ export async function GET(req: Request) {
         inProgressCount,
         completedCount: completionsSet.size,
       },
+      timing: {
+        dbDurationMs,
+        totalDurationMs,
+      },
     });
+
+    response.headers.set(
+      "Server-Timing",
+      `db;dur=${dbDurationMs};desc="Database Query", total;dur=${totalDurationMs};desc="Total Route"`
+    );
 
     return hasAuthSession
       ? applyNoStoreHeaders(response)

@@ -1,4 +1,4 @@
-import { getDnsStatus, initDns } from "./dns";
+import { getDnsStatus, initDns, createResilientLookup } from "./dns";
 
 // Ensure DNS is configured for MongoDB Atlas SRV record resolution prior to driver initialization
 initDns();
@@ -6,6 +6,7 @@ initDns();
 import type { Db, MongoClient, MongoClientOptions } from "mongodb";
 import { connectToConfiguredMongo } from "./security/mongoConnection";
 
+const resilientLookup = createResilientLookup();
 
 interface MongoCache {
   client: MongoClient | null;
@@ -32,6 +33,7 @@ const mongoOptions: MongoClientOptions = {
   minPoolSize: 0,
   serverSelectionTimeoutMS: 8000,
   connectTimeoutMS: 10000,
+  lookup: resilientLookup,
 };
 
 function getErrorCode(error: unknown): string | number | undefined {
