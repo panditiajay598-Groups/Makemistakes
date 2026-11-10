@@ -3,6 +3,7 @@ import { getDb } from "@/lib/mongodb";
 import { applyNoStoreHeaders } from "@/lib/cacheHeaders";
 import { getAuthSession } from "@/lib/authSession";
 import { redactGithubAccessToken } from "@/lib/security/githubOAuth";
+import { redactVercelAccessToken } from "@/lib/security/vercelOAuth";
 import { migrateStoredJourneyPhase } from "@/lib/nova/projectProgress";
 
 const COLLECTION_NAME = "user_journeys";
@@ -200,7 +201,7 @@ export async function GET(req: Request) {
         currentPhase: safeCurrentPhase,
         maxAllowedPhase,
         status: journey.status || "in_progress",
-        phases: redactGithubAccessToken(mergedPhases),
+        phases: redactVercelAccessToken(redactGithubAccessToken(mergedPhases)),
         lastSavedAt: journey.lastSavedAt || journey.updatedAt,
         lastActivityAt: journey.lastActivityAt || journey.updatedAt,
         updatedAt: journey.updatedAt,

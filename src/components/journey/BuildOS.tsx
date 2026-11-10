@@ -1640,6 +1640,14 @@ export default function BuildOS({ problemId, productName: propName, problemData,
                 Journey
               </Link>
             )}
+            <Link
+              href="/dashboard"
+              aria-label="Go to Dashboard"
+              title="Go to Dashboard"
+              className="inline-flex shrink-0 items-center gap-1 rounded border border-zinc-800 bg-zinc-900 px-2 py-1 text-[11px] font-medium text-zinc-300 transition-colors hover:border-green-700 hover:text-green-300"
+            >
+              Go to Dashboard
+            </Link>
             <span className="hidden text-zinc-700 sm:inline">/</span>
             <span className="hidden shrink-0 rounded border border-zinc-800 bg-zinc-900 px-1.5 py-1 font-mono text-[10px] text-zinc-400 sm:inline">
               {problemId || "P000001"}

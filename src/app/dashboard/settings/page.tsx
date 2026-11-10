@@ -133,6 +133,14 @@ function SettingsContent() {
   const [showCheckoutModal, setShowCheckoutModal] = useState(false);
   const [githubConnected, setGithubConnected] = useState(false);
   const [githubUsername, setGithubUsername] = useState("");
+  const [vercelConnected, setVercelConnected] = useState(false);
+  const [vercelUsername, setVercelUsername] = useState("");
+  const [activeProblemId, setActiveProblemId] = useState("");
+  const [connectingGithub, setConnectingGithub] = useState(false);
+  const [connectingVercel, setConnectingVercel] = useState(false);
+  const [disconnecting, setDisconnecting] = useState<"github" | "vercel" | null>(null);
+  const [integrationError, setIntegrationError] = useState("");
+  const [integrationNotice, setIntegrationNotice] = useState("");
 
   // Update tab in URL search params without page reload
   const handleCategoryChange = (cat: SettingsCategory) => {
@@ -208,18 +216,24 @@ function SettingsContent() {
         }
       }
 
-      // 3. Fetch Journey GitHub status
+      // 3. Fetch Journey GitHub + Vercel status
       try {
         const jRes = await fetch(`/api/journey/active?userId=${encodeURIComponent(userId)}`);
         if (jRes.ok) {
           const jData = await jRes.json();
           if (jData.problemId) {
+            setActiveProblemId(jData.problemId);
             const uDataRes = await fetch(`/api/journey/user-data?userId=${encodeURIComponent(userId)}&problemId=${encodeURIComponent(jData.problemId)}`);
             if (uDataRes.ok) {
               const uData = await uDataRes.json();
-              if (uData.phases?.deploy?.githubRepoUrl || uData.phases?.deploy?.githubUsername) {
+              const deploy = uData.phases?.deploy;
+              if (deploy?.githubRepoUrl || deploy?.githubUsername) {
                 setGithubConnected(true);
-                setGithubUsername(uData.phases.deploy.githubUsername || "GitHub Connected");
+                setGithubUsername(deploy.githubUsername || "GitHub Connected");
+              }
+              if (deploy?.vercelUsername || deploy?.vercelConnectedAt) {
+                setVercelConnected(true);
+                setVercelUsername(deploy.vercelUsername || "Vercel Connected");
               }
             }
           }
@@ -252,6 +266,61 @@ function SettingsContent() {
     }
     loadData();
   }, [router, loadData]);
+
+  // Integration connection handlers
+  const handleConnectGithub = () => {
+    setIntegrationError("");
+    if (!activeProblemId) {
+      setIntegrationError("No active project found. Open a project first.");
+      return;
+    }
+    setConnectingGithub(true);
+    window.location.href = `/api/github/connect?problemId=${encodeURIComponent(activeProblemId)}`;
+  };
+
+  const handleConnectVercel = () => {
+    setIntegrationError("");
+    if (!activeProblemId) {
+      setIntegrationError("No active project found. Open a project first.");
+      return;
+    }
+    setConnectingVercel(true);
+    window.location.href = `/api/vercel/connect?problemId=${encodeURIComponent(activeProblemId)}`;
+  };
+
+  const handleDisconnect = async (provider: "github" | "vercel") => {
+    setIntegrationError("");
+    setIntegrationNotice("");
+    if (!activeProblemId) {
+      setIntegrationError("No active project found.");
+      return;
+    }
+    setDisconnecting(provider);
+    try {
+      const res = await fetch(`/api/${provider}/disconnect`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "same-origin",
+        body: JSON.stringify({ problemId: activeProblemId }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || `Failed to disconnect ${provider}`);
+      }
+      if (provider === "github") {
+        setGithubConnected(false);
+        setGithubUsername("");
+      } else {
+        setVercelConnected(false);
+        setVercelUsername("");
+      }
+      setIntegrationNotice(`${provider === "github" ? "GitHub" : "Vercel"} disconnected successfully.`);
+    } catch (err) {
+      setIntegrationError(err instanceof Error ? err.message : `Failed to disconnect ${provider}`);
+    } finally {
+      setDisconnecting(null);
+    }
+  };
 
   // Save Profile Handler
   const handleSaveProfile = async (e?: React.FormEvent) => {
@@ -1029,6 +1098,17 @@ function SettingsContent() {
                     </p>
                   </div>
 
+                  {integrationError && (
+                    <div className="p-3 rounded-xl border border-red-200 bg-red-50 text-red-700 text-xs font-sans font-medium">
+                      {integrationError}
+                    </div>
+                  )}
+                  {integrationNotice && (
+                    <div className="p-3 rounded-xl border border-emerald-200 bg-emerald-50 text-emerald-700 text-xs font-sans font-medium">
+                      {integrationNotice}
+                    </div>
+                  )}
+
                   <div className="space-y-4">
                     {/* GitHub Integration */}
                     <div className="p-5 rounded-2xl border border-zinc-200 bg-zinc-50 flex items-center justify-between gap-4">
@@ -1059,17 +1139,30 @@ function SettingsContent() {
                         </div>
                       </div>
 
-                      <button
-                        type="button"
-                        onClick={() => {
-                          const clientId = "Ov23liYrGHHiwhTsUBWb";
-                          const redirectUri = `${window.location.origin}/api/github/callback`;
-                          window.location.href = `https://github.com/login/oauth/authorize?client_id=${clientId}&redirect_uri=${encodeURIComponent(redirectUri)}&scope=repo,user`;
-                        }}
-                        className="px-4 py-2 rounded-xl bg-zinc-900 hover:bg-zinc-800 text-white text-xs font-semibold font-sans cursor-pointer transition-all shrink-0"
-                      >
-                        {githubConnected ? "Re-authorize GitHub" : "Connect GitHub"}
-                      </button>
+                      <div className="flex items-center gap-2 shrink-0">
+                        {githubConnected && (
+                          <button
+                            type="button"
+                            onClick={() => handleDisconnect("github")}
+                            disabled={disconnecting === "github"}
+                            className="px-4 py-2 rounded-xl border border-zinc-300 text-zinc-700 hover:bg-zinc-100 text-xs font-semibold font-sans cursor-pointer transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                          >
+                            {disconnecting === "github" ? "Disconnecting…" : "Disconnect"}
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          onClick={handleConnectGithub}
+                          disabled={connectingGithub || disconnecting === "github"}
+                          className="px-4 py-2 rounded-xl bg-zinc-900 hover:bg-zinc-800 text-white text-xs font-semibold font-sans cursor-pointer transition-all shrink-0 disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                          {connectingGithub
+                            ? "Connecting…"
+                            : githubConnected
+                            ? "Re-authorize GitHub"
+                            : "Connect GitHub"}
+                        </button>
+                      </div>
                     </div>
 
                     {/* Vercel Integration */}
@@ -1079,18 +1172,54 @@ function SettingsContent() {
                           ▲
                         </div>
                         <div>
-                          <h3 className="text-sm font-bold text-zinc-900 font-sans">
-                            Vercel
-                          </h3>
+                          <div className="flex items-center gap-2">
+                            <h3 className="text-sm font-bold text-zinc-900 font-sans">
+                              Vercel
+                            </h3>
+                            <span
+                              className={`text-[10px] font-mono font-bold px-2 py-0.5 rounded-full ${
+                                vercelConnected
+                                  ? "bg-emerald-100 text-emerald-800 border border-emerald-200"
+                                  : "bg-zinc-200 text-zinc-600"
+                              }`}
+                            >
+                              {vercelConnected ? "Connected" : "Not Connected"}
+                            </span>
+                          </div>
                           <p className="text-[11px] text-zinc-500 font-sans mt-0.5">
-                            Deploy live web application previews during Deploy phase.
+                            {vercelConnected
+                              ? vercelUsername
+                                ? `Connected as @${vercelUsername}`
+                                : "Connected to Vercel"
+                              : "Deploy live application previews during the Deploy phase."}
                           </p>
                         </div>
                       </div>
 
-                      <span className="text-xs font-mono text-zinc-400 bg-zinc-200 px-3 py-1.5 rounded-xl font-semibold">
-                        Ready for Deploy Phase
-                      </span>
+                      <div className="flex items-center gap-2 shrink-0">
+                        {vercelConnected && (
+                          <button
+                            type="button"
+                            onClick={() => handleDisconnect("vercel")}
+                            disabled={disconnecting === "vercel"}
+                            className="px-4 py-2 rounded-xl border border-zinc-300 text-zinc-700 hover:bg-zinc-100 text-xs font-semibold font-sans cursor-pointer transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                          >
+                            {disconnecting === "vercel" ? "Disconnecting…" : "Disconnect"}
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          onClick={handleConnectVercel}
+                          disabled={connectingVercel || disconnecting === "vercel"}
+                          className="px-4 py-2 rounded-xl bg-zinc-900 hover:bg-zinc-800 text-white text-xs font-semibold font-sans cursor-pointer transition-all shrink-0 disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                          {connectingVercel
+                            ? "Connecting…"
+                            : vercelConnected
+                            ? "Re-authorize Vercel"
+                            : "Connect Vercel"}
+                        </button>
+                      </div>
                     </div>
 
                     {/* AI Provider Integration */}
