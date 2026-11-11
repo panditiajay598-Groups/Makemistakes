@@ -134,3 +134,67 @@ test("PDF export automatically paginates multi-item data onto multiple pages", a
   assert.ok(parsed.text.includes("Page 1 of"));
 });
 
+test("PDF export handles raw MongoDB Date objects, numbers, and BSON types without e.split error", async () => {
+  const mongoPayload = {
+    user: "panditiajay598@gmail.com",
+    email: "panditiajay598@gmail.com",
+    exportedAt: new Date().toISOString(),
+    profile: {
+      name: "Ajay Panditi",
+      role: "student",
+      createdAt: new Date("2026-01-15T08:00:00Z"),
+      bio: "Learning to build real products",
+    },
+    preferences: {
+      theme: "dark",
+      autoSave: true,
+      emailNotifications: false,
+    },
+    journeysCount: 2,
+    journeys: [
+      {
+        problemId: "portfolio-builder",
+        problemTitle: "Interactive Portfolio",
+        currentPhase: "Phase 5 - Build",
+        status: "Active",
+        updatedAt: new Date("2026-11-10T12:00:00Z"),
+        lastActivityAt: new Date("2026-11-11T09:00:00Z"),
+      },
+      {
+        problemId: "ecommerce-checkout",
+        currentPhase: "Phase 1 - Discover",
+        status: "In Progress",
+        updatedAt: new Date(),
+      },
+    ],
+    completionsCount: 1,
+    completions: [
+      {
+        problemId: "portfolio-builder",
+        completedAt: new Date("2026-11-10T15:00:00Z"),
+        score: 95,
+      },
+    ],
+    workspacesCount: 1,
+    workspaces: [
+      {
+        problemId: "portfolio-builder",
+        updatedAt: new Date(),
+      },
+    ],
+  };
+
+  // Must execute cleanly without throwing "e.split is not a function"
+  const buffer = generatePersonalDataPdf(mongoPayload);
+  assert.ok(Buffer.isBuffer(buffer));
+  assert.ok(buffer.length > 500);
+
+  const parser = new PDFParse(new Uint8Array(buffer));
+  const parsed = await parser.getText();
+
+  assert.ok(parsed.text.includes("panditiajay598@gmail.com"));
+  assert.ok(parsed.text.includes("Ajay Panditi"));
+  assert.ok(parsed.text.includes("Interactive Portfolio"));
+  assert.ok(parsed.text.includes("95%"));
+});
+

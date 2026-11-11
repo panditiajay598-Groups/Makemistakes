@@ -19,9 +19,21 @@ export interface ExportDataPayload {
   workspaces: Record<string, any>[];
 }
 
-function sanitizeText(input: unknown): string {
+export function sanitizeText(input: unknown): string {
   if (input === null || input === undefined) return "";
-  const str = typeof input === "string" ? input : String(input);
+  let str: string;
+  if (input instanceof Date) {
+    str = input.toISOString();
+  } else if (typeof input === "object") {
+    try {
+      str = JSON.stringify(input);
+    } catch {
+      str = String(input);
+    }
+  } else {
+    str = String(input);
+  }
+
   return str
     .replace(/\\/g, "\\\\")
     .replace(/\(/g, "\\(")
@@ -38,7 +50,8 @@ function sanitizeText(input: unknown): string {
     .trim();
 }
 
-function wrapLine(text: string, maxLen: number): string[] {
+export function wrapLine(input: unknown, maxLen: number): string[] {
+  const text = sanitizeText(input) || "N/A";
   if (text.length <= maxLen) return [text];
   const words = text.split(" ");
   const lines: string[] = [];
@@ -63,7 +76,7 @@ function wrapLine(text: string, maxLen: number): string[] {
     }
   }
   if (current) lines.push(current);
-  return lines;
+  return lines.length > 0 ? lines : ["N/A"];
 }
 
 class SimplePdfDocument {
@@ -104,9 +117,8 @@ class SimplePdfDocument {
     this.y -= 28;
   }
 
-  public drawKeyValue(label: string, value: string, indent = 55) {
-    const sanitizedVal = sanitizeText(value || "N/A");
-    const wrapped = wrapLine(sanitizedVal, 60);
+  public drawKeyValue(label: unknown, value: unknown, indent = 55) {
+    const wrapped = wrapLine(value, 60);
 
     this.ensureSpace(wrapped.length * 14 + 4);
 
@@ -120,9 +132,9 @@ class SimplePdfDocument {
     }
   }
 
-  public drawCard(fields: { label: string; value: string }[]) {
+  public drawCard(fields: { label: unknown; value: unknown }[]) {
     // Estimate space needed
-    const totalLines = fields.reduce((acc, f) => acc + wrapLine(f.value || "N/A", 65).length, 0);
+    const totalLines = fields.reduce((acc, f) => acc + wrapLine(f.value, 65).length, 0);
     const boxHeight = totalLines * 13 + 12;
     this.ensureSpace(boxHeight + 8);
 
@@ -134,7 +146,7 @@ class SimplePdfDocument {
     let currentFieldY = startY;
 
     for (const field of fields) {
-      const wrapped = wrapLine(sanitizeText(field.value || "N/A"), 65);
+      const wrapped = wrapLine(field.value, 65);
       this.currentPage.push(`BT /F2 8.5 Tf 0.3 0.3 0.3 rg 60 ${currentFieldY} Td (${sanitizeText(field.label)}:) Tj ET`);
       this.currentPage.push(`BT /F1 8.5 Tf 0.1 0.1 0.1 rg 170 ${currentFieldY} Td (${wrapped[0]}) Tj ET`);
       currentFieldY -= 13;
@@ -243,14 +255,14 @@ export function generatePersonalDataPdf(data: ExportDataPayload): Buffer {
   doc.drawSectionHeader("1. Account & Security Overview");
   doc.drawKeyValue("Primary User ID", data.user);
   doc.drawKeyValue("Registered Email", data.email || "Not specified");
-  doc.drawKeyValue("Export Timestamp", data.exportedAt);
-  doc.drawKeyValue("Completed Journeys", String(data.journeysCount));
-  doc.drawKeyValue("Problem Completions", String(data.completionsCount));
-  doc.drawKeyValue("Active Workspaces", String(data.workspacesCount));
+  doc.drawKeyValue("Export Timestamp", String(data.exportedAt || new Date().toISOString()));
+  doc.drawKeyValue("Completed Journeys", String(data.journeysCount ?? 0));
+  doc.drawKeyValue("Problem Completions", String(data.completionsCount ?? 0));
+  doc.drawKeyValue("Active Workspaces", String(data.workspacesCount ?? 0));
 
   // Section 2: Profile Details
   doc.drawSectionHeader("2. Profile Information");
-  if (data.profile && Object.keys(data.profile).length > 0) {
+  if (data.profile && typeof data.profile === "object" && Object.keys(data.profile).length > 0) {
     const p = data.profile;
     doc.drawKeyValue("Display Name", p.name || p.displayName || "Not specified");
     doc.drawKeyValue("Username / Handle", p.username || p.handle || "Not specified");
@@ -258,14 +270,17 @@ export function generatePersonalDataPdf(data: ExportDataPayload): Buffer {
     doc.drawKeyValue("Account Role", p.role || "student");
     if (p.githubUsername) doc.drawKeyValue("Connected GitHub", p.githubUsername);
     if (p.location) doc.drawKeyValue("Location", p.location);
-    if (p.createdAt) doc.drawKeyValue("Member Since", String(p.createdAt));
+    if (p.createdAt) {
+      const createdStr = p.createdAt instanceof Date ? p.createdAt.toISOString() : String(p.createdAt);
+      doc.drawKeyValue("Member Since", createdStr);
+    }
   } else {
     doc.drawEmptyNotice("No custom profile records have been created yet.");
   }
 
   // Section 3: User Preferences
   doc.drawSectionHeader("3. Workspace & Privacy Preferences");
-  if (data.preferences && Object.keys(data.preferences).length > 0) {
+  if (data.preferences && typeof data.preferences === "object" && Object.keys(data.preferences).length > 0) {
     const pref = data.preferences;
     doc.drawKeyValue("Editor Theme", pref.theme || "System Default");
     doc.drawKeyValue("Auto-Save", pref.autoSave !== undefined ? String(pref.autoSave) : "Enabled");
@@ -276,19 +291,26 @@ export function generatePersonalDataPdf(data: ExportDataPayload): Buffer {
   }
 
   // Section 4: Product Journeys
-  doc.drawSectionHeader(`4. Product Journeys (${data.journeysCount})`);
-  if (data.journeys && data.journeys.length > 0) {
+  doc.drawSectionHeader(`4. Product Journeys (${data.journeysCount ?? 0})`);
+  if (data.journeys && Array.isArray(data.journeys) && data.journeys.length > 0) {
     for (let i = 0; i < data.journeys.length; i++) {
       const j = data.journeys[i];
       const journeyTitle = j.problemTitle
         ? `${j.problemTitle}${j.problemId ? ` (${j.problemId})` : ""}`
         : j.problemId || j.title || "Custom Problem";
+
+      const lastActivity = j.updatedAt instanceof Date
+        ? j.updatedAt.toISOString()
+        : j.lastActivityAt instanceof Date
+          ? j.lastActivityAt.toISOString()
+          : String(j.updatedAt || j.lastActivityAt || "Recent");
+
       doc.drawCard([
         { label: "Journey #", value: String(i + 1) },
         { label: "Problem", value: journeyTitle },
         { label: "Current Phase", value: j.currentPhase || j.phase || j.currentStage || "Phase 1 - Discover" },
         { label: "Status", value: j.status || "Active" },
-        { label: "Last Activity", value: j.updatedAt || j.lastActivityAt || "Recent" },
+        { label: "Last Activity", value: lastActivity },
       ]);
     }
   } else {
@@ -296,18 +318,25 @@ export function generatePersonalDataPdf(data: ExportDataPayload): Buffer {
   }
 
   // Section 5: Problem Completions
-  doc.drawSectionHeader(`5. Milestone & Problem Completions (${data.completionsCount})`);
-  if (data.completions && data.completions.length > 0) {
+  doc.drawSectionHeader(`5. Milestone & Problem Completions (${data.completionsCount ?? 0})`);
+  if (data.completions && Array.isArray(data.completions) && data.completions.length > 0) {
     for (let i = 0; i < data.completions.length; i++) {
       const c = data.completions[i];
       const compTitle = c.problemTitle
         ? `${c.problemTitle}${c.problemId ? ` (${c.problemId})` : ""}`
         : c.problemId || "Completed Problem";
+
+      const completedAt = c.completedAt instanceof Date
+        ? c.completedAt.toISOString()
+        : c.createdAt instanceof Date
+          ? c.createdAt.toISOString()
+          : String(c.completedAt || c.createdAt || "Recorded");
+
       doc.drawCard([
         { label: "Completion #", value: String(i + 1) },
         { label: "Problem", value: compTitle },
-        { label: "Completed At", value: String(c.completedAt || c.createdAt || "Recorded") },
-        { label: "Score / Grade", value: c.score ? `${c.score}%` : "Verified Complete" },
+        { label: "Completed At", value: completedAt },
+        { label: "Score / Grade", value: c.score !== undefined ? `${c.score}%` : "Verified Complete" },
       ]);
     }
   } else {
@@ -315,14 +344,18 @@ export function generatePersonalDataPdf(data: ExportDataPayload): Buffer {
   }
 
   // Section 6: BuildOS Workspaces
-  doc.drawSectionHeader(`6. BuildOS Workspaces (${data.workspacesCount})`);
-  if (data.workspaces && data.workspaces.length > 0) {
+  doc.drawSectionHeader(`6. BuildOS Workspaces (${data.workspacesCount ?? 0})`);
+  if (data.workspaces && Array.isArray(data.workspaces) && data.workspaces.length > 0) {
     for (let i = 0; i < data.workspaces.length; i++) {
       const w = data.workspaces[i];
+      const lastSaved = w.updatedAt instanceof Date
+        ? w.updatedAt.toISOString()
+        : String(w.updatedAt || w.lastSaved || "Recent");
+
       doc.drawCard([
         { label: "Workspace #", value: String(i + 1) },
         { label: "Project Identifier", value: w.problemId || w.projectId || w.name || "Default Project" },
-        { label: "Last Saved", value: String(w.updatedAt || w.lastSaved || "Recent") },
+        { label: "Last Saved", value: lastSaved },
       ]);
     }
   } else {
