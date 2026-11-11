@@ -1,7 +1,11 @@
 import path from "path";
 
 import dotenv from "dotenv";
-dotenv.config({ path: path.join(__dirname, "..", ".env") });
+const envPath =
+  typeof __dirname !== "undefined"
+    ? path.join(__dirname, "..", ".env")
+    : path.resolve(process.cwd(), ".env");
+dotenv.config({ path: envPath });
 
 import { getDb } from "../src/lib/mongodb";
 import {

@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getDb } from "@/lib/mongodb";
 import { getAuthSession } from "@/lib/authSession";
 import { applyNoStoreHeaders } from "@/lib/cacheHeaders";
+import { generatePersonalDataPdf } from "@/lib/pdfExport";
 
 export async function GET(req: Request) {
   try {
@@ -61,11 +62,27 @@ export async function GET(req: Request) {
       workspaces: workspaces.map(({ _id, ...w }) => w),
     };
 
-    const res = new NextResponse(JSON.stringify(exportData, null, 2), {
+    const url = new URL(req.url);
+    const format = url.searchParams.get("format")?.toLowerCase();
+
+    if (format === "json") {
+      const jsonRes = new NextResponse(JSON.stringify(exportData, null, 2), {
+        status: 200,
+        headers: {
+          "Content-Type": "application/json",
+          "Content-Disposition": `attachment; filename="makemistakes-data-export-${primaryUserId}.json"`,
+        },
+      });
+      return applyNoStoreHeaders(jsonRes);
+    }
+
+    // Default: Export Data as PDF
+    const pdfBuffer = generatePersonalDataPdf(exportData);
+    const res = new NextResponse(new Uint8Array(pdfBuffer), {
       status: 200,
       headers: {
-        "Content-Type": "application/json",
-        "Content-Disposition": `attachment; filename="makemistakes-data-export-${primaryUserId}.json"`,
+        "Content-Type": "application/pdf",
+        "Content-Disposition": `attachment; filename="makemistakes-data-export-${primaryUserId}.pdf"`,
       },
     });
     return applyNoStoreHeaders(res);

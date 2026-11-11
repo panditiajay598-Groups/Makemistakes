@@ -9,6 +9,12 @@ import {
   sandboxPaymentsEnabled,
   activatePaymentOnce,
 } from "./security/paymentSecurity";
+import {
+  deductCreditsAtomically,
+  type CreditStore,
+  type DeductOptions,
+  type CreditStoreBalance,
+} from "./security/creditDeduction";
 
 const RAZORPAY_KEY_ID = process.env.RAZORPAY_KEY_ID || "";
 const RAZORPAY_KEY_SECRET = process.env.RAZORPAY_KEY_SECRET || "";
@@ -545,47 +551,79 @@ export class PaymentService {
 
   /**
    * 5. ATOMIC AI CREDIT DEDUCTION
-   * Ensures user balance cannot be overspent.
+   * Ensures user balance cannot be overspent under concurrency and handles transient retries.
    */
-  public static async deductAiCredit(userId: string, cost: number = 1, reference: string = "nova_query") {
-    if (!userId) {
-      return { success: false, reason: "UNAUTHORIZED" };
-    }
-
-    const balance = await prisma.aiCreditBalance.findUnique({
-      where: { userId },
-    });
-
-    if (!balance || balance.remainingCredits < cost) {
-      return {
-        success: false,
-        reason: "INSUFFICIENT_CREDITS",
-        remainingCredits: balance?.remainingCredits || 0,
-      };
-    }
-
-    // Atomic decrement
-    const updated = await prisma.aiCreditBalance.update({
-      where: { userId },
-      data: {
-        usedCredits: { increment: cost },
-        remainingCredits: { decrement: cost },
+  public static async deductAiCredit(
+    userId: string,
+    cost: number = 1,
+    reference: string = "nova_query",
+    options?: DeductOptions
+  ) {
+    const store: CreditStore = {
+      async decrementIfSufficient(uid: string, c: number): Promise<boolean> {
+        const update = await prisma.aiCreditBalance.updateMany({
+          where: {
+            userId: uid,
+            remainingCredits: { gte: c },
+          },
+          data: {
+            usedCredits: { increment: c },
+            remainingCredits: { decrement: c },
+          },
+        });
+        return update.count === 1;
       },
-    });
 
-    await prisma.aiCreditTransaction.create({
-      data: {
-        userId,
-        amount: -cost,
-        type: "NOVA_QUERY",
-        referenceId: reference,
-        balanceAfter: updated.remainingCredits,
+      async getBalance(uid: string): Promise<CreditStoreBalance | null> {
+        const record = await prisma.aiCreditBalance.findUnique({
+          where: { userId: uid },
+          select: {
+            remainingCredits: true,
+            totalCredits: true,
+            usedCredits: true,
+          },
+        });
+        return record;
       },
-    });
 
-    return {
-      success: true,
-      remainingCredits: updated.remainingCredits,
+      async initializeBalanceIfMissing(uid: string, defaultCredits: number = 100): Promise<boolean> {
+        try {
+          await prisma.aiCreditBalance.create({
+            data: {
+              userId: uid,
+              totalCredits: defaultCredits,
+              usedCredits: 0,
+              remainingCredits: defaultCredits,
+            },
+          });
+          return true;
+        } catch (err: any) {
+          if (err?.code === "P2002") {
+            return true;
+          }
+          throw err;
+        }
+      },
+
+      async recordTransaction(
+        uid: string,
+        amount: number,
+        type: string,
+        referenceId: string,
+        balanceAfter: number
+      ): Promise<void> {
+        await prisma.aiCreditTransaction.create({
+          data: {
+            userId: uid,
+            amount,
+            type,
+            referenceId,
+            balanceAfter,
+          },
+        });
+      },
     };
+
+    return deductCreditsAtomically(store, userId, cost, reference, options);
   }
 }

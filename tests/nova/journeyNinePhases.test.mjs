@@ -1,3 +1,4 @@
+process.env.JWT_ACCESS_SECRET = process.env.JWT_ACCESS_SECRET || "test-jwt-secret-for-testing-only-32bytes!";
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
@@ -6,7 +7,8 @@ import {
   migrateStoredJourneyPhase,
   projectActivityScope,
 } from "../../src/lib/nova/projectProgress.ts";
-import { computeMaxAllowedPhase } from "../../src/app/api/journey/user-data/route.ts";
+
+const { computeMaxAllowedPhase } = await import("../../src/app/api/journey/user-data/route.ts");
 
 const NINE_PHASES = [
   "Discover",

@@ -412,9 +412,9 @@ function SettingsContent() {
     }
   };
 
-  // Export Data Handler
+  // Export Data Handler (PDF format)
   const handleExportData = () => {
-    window.open(`/api/settings/export-data?userId=${encodeURIComponent(userId)}`, "_blank");
+    window.open(`/api/settings/export-data?userId=${encodeURIComponent(userId)}&format=pdf`, "_blank");
   };
 
   // Delete Account Handler
@@ -1571,7 +1571,7 @@ function SettingsContent() {
                           Export Personal Data
                         </h3>
                         <p className="text-[11px] text-zinc-500 font-sans mt-0.5">
-                          Download a copy of your completed journeys, profile, and portfolio milestones in JSON format.
+                          Download a copy of your completed journeys, profile, and portfolio milestones in PDF format.
                         </p>
                       </div>
 
@@ -1581,7 +1581,7 @@ function SettingsContent() {
                         className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-teal-800 hover:bg-teal-700 text-white text-xs font-semibold font-sans cursor-pointer transition-all shrink-0"
                       >
                         <Download className="h-3.5 w-3.5" />
-                        <span>Export Data (JSON)</span>
+                        <span>Export Data (PDF)</span>
                       </button>
                     </div>
 

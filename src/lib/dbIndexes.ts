@@ -143,7 +143,22 @@ export async function ensureAppIndexes(targetDb?: Db): Promise<EnsureIndexesResu
   for (const def of JUSTIFIED_INDEXES) {
     const collection = db.collection(def.collection);
     try {
-      const existingIndexes = await collection.indexes();
+      let existingIndexes: IndexDescription[] = [];
+      try {
+        existingIndexes = await collection.indexes();
+      } catch (indexErr: any) {
+        if (
+          indexErr?.code === 26 ||
+          indexErr?.codeName === "NamespaceNotFound" ||
+          (typeof indexErr?.message === "string" &&
+            (indexErr.message.includes("ns does not exist") ||
+              indexErr.message.includes("NamespaceNotFound")))
+        ) {
+          existingIndexes = [];
+        } else {
+          throw indexErr;
+        }
+      }
 
       // Check if an index with identical name exists
       const existingByName = findIndexByName(existingIndexes, def.options.name);
@@ -194,13 +209,26 @@ export async function ensureAppIndexes(targetDb?: Db): Promise<EnsureIndexesResu
             ? `$${keyFields[0]}`
             : Object.fromEntries(keyFields.map((k) => [k, `$${k}`]));
 
-        const duplicates = await collection
-          .aggregate([
-            { $group: { _id: groupId, count: { $sum: 1 } } },
-            { $match: { count: { $gt: 1 } } },
-            { $limit: 1 },
-          ])
-          .toArray();
+        let duplicates: any[] = [];
+        try {
+          duplicates = await collection
+            .aggregate([
+              { $group: { _id: groupId, count: { $sum: 1 } } },
+              { $match: { count: { $gt: 1 } } },
+              { $limit: 1 },
+            ])
+            .toArray();
+        } catch (aggErr: any) {
+          if (
+            aggErr?.code === 26 ||
+            aggErr?.codeName === "NamespaceNotFound" ||
+            (typeof aggErr?.message === "string" && aggErr.message.includes("ns does not exist"))
+          ) {
+            duplicates = [];
+          } else {
+            throw aggErr;
+          }
+        }
 
         if (duplicates.length > 0) {
           results.push({
