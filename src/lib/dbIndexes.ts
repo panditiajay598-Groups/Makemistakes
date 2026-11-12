@@ -45,6 +45,18 @@ export const JUSTIFIED_INDEXES: IndexDefinition[] = [
     reason: "Exact equality lookup and upsert for isolated BuildOS workspaces per user and problem.",
   },
   {
+    collection: "build_workspace_files",
+    spec: { userId: 1, problemId: 1, path: 1 },
+    options: { name: "idx_build_workspace_files_userId_problemId_path", unique: true, background: true },
+    reason: "Authoritative durable student file store; exact equality lookup by owned workspace and path. The unique compound key also keeps soft-delete tombstones occupied so a stale client cannot resurrect a deleted file (T6.1).",
+  },
+  {
+    collection: "build_workspace_quotas",
+    spec: { userId: 1, problemId: 1 },
+    options: { name: "idx_build_workspace_quotas_userId_problemId", unique: true, background: true },
+    reason: "1:1 per-workspace quota document; the single-document mutex for atomic quota enforcement (T6.1).",
+  },
+  {
     collection: "buildos_activity",
     spec: { userId: 1, problemId: 1, at: -1 },
     options: { name: "idx_buildos_activity_user_problem_at", background: true },
