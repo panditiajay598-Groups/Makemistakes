@@ -84,38 +84,47 @@ export class EmailService {
 
     // 1. Round-Robin Custom Gmail / SMTP Transports (Delivers to ANY email address)
     if (smtpAccounts.length > 0) {
-      const selectedAccount = smtpAccounts[this.roundRobinIndex % smtpAccounts.length];
-      this.roundRobinIndex = (this.roundRobinIndex + 1) % smtpAccounts.length;
+      // Round-robin: start at the current pointer but try EVERY configured account
+      // so a single unhealthy SMTP account cannot block delivery when others are
+      // available (e.g. one revoked Gmail app password while others are valid).
+      const start = this.roundRobinIndex % smtpAccounts.length;
+      this.roundRobinIndex = (start + 1) % smtpAccounts.length;
+      const orderedAccounts = [
+        ...smtpAccounts.slice(start),
+        ...smtpAccounts.slice(0, start),
+      ];
 
-      try {
-        const transporter = getOrCreateTransporter({
-          host: selectedAccount.host,
-          port: selectedAccount.port,
-          secure: selectedAccount.secure,
-          auth: {
-            user: selectedAccount.user,
-            pass: selectedAccount.pass,
-          },
-          connectionTimeout: 8000,
-          greetingTimeout: 8000,
-        });
+      for (const selectedAccount of orderedAccounts) {
+        try {
+          const transporter = getOrCreateTransporter({
+            host: selectedAccount.host,
+            port: selectedAccount.port,
+            secure: selectedAccount.secure,
+            auth: {
+              user: selectedAccount.user,
+              pass: selectedAccount.pass,
+            },
+            connectionTimeout: 8000,
+            greetingTimeout: 8000,
+          });
 
-        const textContent = `Your MakeMistakes verification code is: ${otp}\n\nClick the link below to verify your account:\n${redirectUrl}\n\nThis code expires in 10 minutes. If you did not request this code, please ignore this email.`;
+          const textContent = `Your MakeMistakes verification code is: ${otp}\n\nClick the link below to verify your account:\n${redirectUrl}\n\nThis code expires in 10 minutes. If you did not request this code, please ignore this email.`;
 
-        await transporter.sendMail({
-          from: process.env.SMTP_FROM || `"MakeMistakes Team" <${selectedAccount.user}>`,
-          replyTo: process.env.REPLY_TO || "support@makemistakes.in",
-          to: email,
-          subject,
-          text: textContent,
-          html,
-        });
+          await transporter.sendMail({
+            from: process.env.SMTP_FROM || `"MakeMistakes Team" <${selectedAccount.user}>`,
+            replyTo: process.env.REPLY_TO || "support@makemistakes.in",
+            to: email,
+            subject,
+            text: textContent,
+            html,
+          });
 
-        console.log(`[SMTP Success] Verification email sent using configured SMTP.`);
-        return { success: true };
-      } catch (err: unknown) {
-        const code = err instanceof Error && "code" in err ? err.code : "provider error";
-        console.warn("[SMTP Warning] Configured SMTP delivery failed:", code);
+          console.log(`[SMTP Success] Verification email sent using configured SMTP.`);
+          return { success: true };
+        } catch (err: unknown) {
+          const code = err instanceof Error && "code" in err ? err.code : "provider error";
+          console.warn("[SMTP Warning] Configured SMTP delivery failed:", code);
+        }
       }
     }
 

@@ -7,6 +7,8 @@ import { getDb } from "@/lib/mongodb";
 import {
   appendNovaConversationMessage,
   getOrCreateNovaConversation,
+  claimNovaCreditRequest,
+  releaseNovaCreditRequest,
   saveNovaImplementationPlan,
   sanitizeNovaMessage,
   supersedeFailedNovaAttempts,
@@ -542,17 +544,44 @@ export async function POST(req: Request) {
       execution: context.execution,
     });
 
-    const creditResult = await PaymentService.deductAiCredit(session.userId, 1, "nova_chat");
-    if (!creditResult.success && creditResult.reason === "INSUFFICIENT_CREDITS") {
-      return NextResponse.json(
-        {
-          ok: false,
-          error: "INSUFFICIENT_CREDITS",
-          message:
-            "You have reached your AI credit limit for this period. Upgrade to Pro Builder or Max Founder in Billing Settings for more credits.",
-        },
-        { status: 402 }
-      );
+    // Atomic, idempotent credit gate. Only the request that first CLAIMS this
+    // clientMessageId for this conversation may deduct. Concurrent duplicates or
+    // retries lose the claim and are never billed a second time — even if the
+    // user message is not yet persisted (no read-then-charge race).
+    const shouldDeduct = await claimNovaCreditRequest(
+      db, userId, problemId, conversation.conversationId, clientMessageId
+    );
+    if (shouldDeduct) {
+      let creditResult: Awaited<ReturnType<typeof PaymentService.deductAiCredit>>;
+      try {
+        creditResult = await PaymentService.deductAiCredit(session.userId, 1, "nova_chat");
+      } catch (error) {
+        // Deduction infrastructure failed. Release the claim so a retry with the
+        // same clientMessageId can safely re-claim and re-bill, then surface the
+        // failure. Never leave a stuck claim or serve an unbilled response.
+        await releaseNovaCreditRequest(db, userId, problemId, conversation.conversationId, clientMessageId);
+        throw error;
+      }
+      if (!creditResult.success) {
+        // Any unsuccessful deduction releases the claim (atomic $pull) to avoid a
+        // permanently stuck claim or a free-response ride on a later retry.
+        await releaseNovaCreditRequest(db, userId, problemId, conversation.conversationId, clientMessageId);
+        if (creditResult.reason === "INSUFFICIENT_CREDITS") {
+          return NextResponse.json(
+            {
+              ok: false,
+              error: "INSUFFICIENT_CREDITS",
+              message:
+                "You have reached your AI credit limit for this period. Upgrade to Pro Builder or Max Founder in Billing Settings for more credits.",
+            },
+            { status: 402 }
+          );
+        }
+        return NextResponse.json(
+          { ok: false, error: "Could not process AI credits. Please try again." },
+          { status: 500 }
+        );
+      }
     }
 
     await appendNovaConversationMessage(db, userId, problemId, conversation.conversationId, "user", lastUser, {

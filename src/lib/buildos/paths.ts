@@ -125,7 +125,28 @@ export function resolveTemplateDir(level: BuildLevel = "Beginner"): string {
 }
 
 export function isEditableRelativePath(relativePath: string): boolean {
+  if (typeof relativePath !== "string" || relativePath.length === 0) return false;
+  // Reject null bytes outright.
+  if (relativePath.includes("\0")) return false;
+
+  // Normalize backslashes to forward slashes for segment analysis. Any
+  // backslash-based traversal (`..\..\`) becomes `../..`, which the segment
+  // checks below reject.
   const normalized = relativePath.replace(/\\/g, "/");
+
+  // Reject absolute paths and Windows drive paths (e.g. `/etc/x`, `C:/x`,
+  // `C:\x`). A leading `/` or a drive-letter prefix is never a relative path.
+  if (normalized.startsWith("/")) return false;
+  if (/^[a-zA-Z]:/.test(normalized)) return false;
+
+  // Reject empty or dangerous segments. Splitting on `/` makes `..`,
+  // `.`, empty segments (from `//`, trailing `/`) and absolute roots visible.
+  const segments = normalized.split("/");
+  for (const segment of segments) {
+    if (segment === "") return false;
+    if (segment === "." || segment === "..") return false;
+  }
+
   if (
     normalized.startsWith("node_modules/") ||
     normalized.startsWith(".next/") ||

@@ -7,7 +7,7 @@
     "build": "next build",
     "start": "node scripts/next.cjs start",
     "lint": "eslint",
-    "test": "node --experimental-loader ./tests/nova/routeTestLoader.mjs --test tests/nova/validation.test.mjs tests/nova/workspaceIntelligence.test.mjs tests/nova/workspaceIsolation.test.mjs tests/nova/projectProgress.test.mjs tests/nova/journeyNinePhases.test.mjs tests/nova/conversations.test.mjs tests/nova/learning.test.mjs tests/security/security.test.mjs tests/security/creditDeduction.test.mjs tests/security/pdfExport.test.mjs tests/nova/chatRoute.integration.test.mjs",
+    "test": "node --experimental-loader ./tests/nova/routeTestLoader.mjs --test tests/buildos/provision.test.mjs tests/buildos/fileStore.test.mjs tests/nova/validation.test.mjs tests/nova/workspaceIntelligence.test.mjs tests/nova/workspaceIsolation.test.mjs tests/nova/projectProgress.test.mjs tests/nova/journeyNinePhases.test.mjs tests/nova/conversations.test.mjs tests/nova/learning.test.mjs tests/security/security.test.mjs tests/security/creditDeduction.test.mjs tests/security/pdfExport.test.mjs tests/nova/chatRoute.integration.test.mjs",
     "postinstall": "prisma generate"
   },
   "dependencies": {

@@ -21,6 +21,7 @@ const [
     saveNovaImplementationPlan,
     updateNovaImplementationStep,
   },
+  { PaymentService },
 ] = await Promise.all([
   import("../../src/app/api/nova/chat/route.ts"),
   import("../../src/app/api/nova/implementation/route.ts"),
@@ -28,6 +29,7 @@ const [
   import("../../src/lib/authSession.ts"),
   import("../../src/lib/buildos/paths.ts"),
   import("../../src/lib/nova/conversations.ts"),
+  import("./routeFixtures/mockPaymentService.mjs"),
 ]);
 
 class FixtureCollection {
@@ -50,6 +52,11 @@ class FixtureCollection {
   }
 
   async insertOne(document) {
+    if (document._id !== undefined && this.documents.some((existing) => existing._id === document._id)) {
+      const error = new Error("E11000 duplicate key error collection: duplicate key on _id");
+      error.code = 11000;
+      throw error;
+    }
     this.documents.push(structuredClone(document));
     return { insertedId: document._id };
   }
@@ -86,6 +93,17 @@ class FixtureCollection {
     return structuredClone(document);
   }
 
+  async updateMany(query, update) {
+    let updated = 0;
+    for (const document of this.documents) {
+      if (this.matches(document, query)) {
+        Object.assign(document, update.$set || {});
+        updated += 1;
+      }
+    }
+    return { modifiedCount: updated };
+  }
+
   async updateOne(query, update) {
     const document = this.documents.find((item) => this.matches(item, query));
     if (!document) return { matchedCount: 0 };
@@ -93,10 +111,20 @@ class FixtureCollection {
       const noteExpression = update[0].$set.technicalMemory;
       const notes = noteExpression.$slice[0].$concatArrays[1].$literal;
       document.technicalMemory = [...(document.technicalMemory || []), ...notes].slice(noteExpression.$slice[1]);
+    } else if (update.$addToSet) {
+      let modified = 0;
+      for (const [key, value] of Object.entries(update.$addToSet)) {
+        if (!document[key]) document[key] = [];
+        if (!document[key].includes(value)) {
+          document[key].push(value);
+          modified += 1;
+        }
+      }
+      return { matchedCount: 1, modifiedCount: modified };
     } else {
       Object.assign(document, update.$set || {});
     }
-    return { matchedCount: 1 };
+    return { matchedCount: 1, modifiedCount: 1 };
   }
 
   aggregate() {
@@ -218,6 +246,147 @@ test.after(() => {
   else process.env.GROQ_API_KEY = originalGroqKey;
   if (originalJwtSecret === undefined) delete process.env.JWT_ACCESS_SECRET;
   else process.env.JWT_ACCESS_SECRET = originalJwtSecret;
+});
+
+test("retrying the same request with the same clientMessageId does not deduct AI credits twice", async (t) => {
+  const studentA = `${testUserPrefix}-credit@example.test`;
+  const projectA = `project-credit-${crypto.randomUUID()}`;
+  const fixture = makeProjectFixture(studentA, projectA, "credit");
+  fixtureRoots.add(fixture.root);
+  fixtureOutsidePaths.add(fixture.outsidePath);
+  const db = installFixtures([fixture]);
+  useMockProvider(t);
+  PaymentService.resetDeductionCallCount();
+
+  const clientMessageId = "retry-idempotency-key";
+  const body = { ...requestBody(projectA), clientMessageId };
+
+  const first = await POST(authenticatedRequest(studentA, body));
+  assert.equal(first.status, 200);
+  assert.equal(PaymentService.getDeductionCallCount(), 1);
+
+  const retry = await POST(authenticatedRequest(studentA, body));
+  assert.equal(retry.status, 200);
+  assert.equal(PaymentService.getDeductionCallCount(), 1, "retry must not deduct credits again");
+
+  const userMessages = db.collection("nova_conversation_messages").documents.filter(
+    (m) => m.role === "user" && m.clientMessageId === clientMessageId
+  );
+  assert.equal(userMessages.length, 1, "duplicate user message must not be appended");
+});
+
+test("concurrent duplicate requests with the same clientMessageId deduct credits only once", async (t) => {
+  const studentA = `${testUserPrefix}-conc@example.test`;
+  const projectA = `project-conc-${crypto.randomUUID()}`;
+  const fixture = makeProjectFixture(studentA, projectA, "conc");
+  fixtureRoots.add(fixture.root);
+  fixtureOutsidePaths.add(fixture.outsidePath);
+  const db = installFixtures([fixture]);
+  useMockProvider(t);
+  PaymentService.resetDeductionCallCount();
+
+  const clientMessageId = "concurrent-idempotency-key";
+  const body = { ...requestBody(projectA), clientMessageId };
+  const [first, second] = await Promise.all([
+    POST(authenticatedRequest(studentA, body)),
+    POST(authenticatedRequest(studentA, body)),
+  ]);
+
+  assert.equal(first.status, 200);
+  assert.equal(second.status, 200);
+  assert.equal(
+    PaymentService.getDeductionCallCount(),
+    1,
+    "concurrent duplicates with the same clientMessageId must deduct credits exactly once"
+  );
+
+  const userMessages = db.collection("nova_conversation_messages").documents.filter(
+    (m) => m.role === "user" && m.clientMessageId === clientMessageId
+  );
+  assert.ok(userMessages.length >= 1, "the user message is stored");
+});
+
+test("insufficient credits returns 402 and releases the claim so a retry can re-bill", async (t) => {
+  const studentA = `${testUserPrefix}-insuf@example.test`;
+  const projectA = `project-insuf-${crypto.randomUUID()}`;
+  const fixture = makeProjectFixture(studentA, projectA, "insuf");
+  fixtureRoots.add(fixture.root);
+  fixtureOutsidePaths.add(fixture.outsidePath);
+  const db = installFixtures([fixture]);
+  useMockProvider(t);
+  PaymentService.resetDeductionCallCount();
+
+  const clientMessageId = "insufficient-idempotency-key";
+  const body = { ...requestBody(projectA), clientMessageId };
+
+  // First attempt: insufficient credits -> 402. The claim must be released so
+  // the same clientMessageId can be billed on a later retry (after top-up).
+  PaymentService.setNextDeductResult({ success: false, reason: "INSUFFICIENT_CREDITS", remainingCredits: 0 });
+  const denied = await POST(authenticatedRequest(studentA, body));
+  assert.equal(denied.status, 402);
+  assert.equal(PaymentService.getDeductionCallCount(), 0, "no credits were deducted on the 402");
+
+  // Retry with credits available now bills exactly once (claim was released).
+  const retry = await POST(authenticatedRequest(studentA, body));
+  assert.equal(retry.status, 200);
+  assert.equal(PaymentService.getDeductionCallCount(), 1, "retry after 402 must bill exactly once");
+});
+
+test("deduction infrastructure failure returns 500 and releases the claim for a safe retry", async (t) => {
+  const studentA = `${testUserPrefix}-fail@example.test`;
+  const projectA = `project-fail-${crypto.randomUUID()}`;
+  const fixture = makeProjectFixture(studentA, projectA, "fail");
+  fixtureRoots.add(fixture.root);
+  fixtureOutsidePaths.add(fixture.outsidePath);
+  const db = installFixtures([fixture]);
+  useMockProvider(t);
+  PaymentService.resetDeductionCallCount();
+
+  const clientMessageId = "failure-idempotency-key";
+  const body = { ...requestBody(projectA), clientMessageId };
+
+  // First attempt: deduction infrastructure throws -> 500, claim released.
+  PaymentService.setNextDeductError(new Error("credit db unavailable"));
+  const failed = await POST(authenticatedRequest(studentA, body));
+  assert.equal(failed.status, 500);
+  assert.equal(PaymentService.getDeductionCallCount(), 1, "the failing attempt did attempt one deduction");
+
+  // Retry with the same clientMessageId re-claims and re-bills once (not stuck).
+  const retry = await POST(authenticatedRequest(studentA, body));
+  assert.equal(retry.status, 200);
+  assert.equal(PaymentService.getDeductionCallCount(), 2, "retry after a deduction failure must bill again exactly once");
+});
+
+test("concurrent retries after a 402 do not double-deduct", async (t) => {
+  const studentA = `${testUserPrefix}-conr@example.test`;
+  const projectA = `project-conr-${crypto.randomUUID()}`;
+  const fixture = makeProjectFixture(studentA, projectA, "conr");
+  fixtureRoots.add(fixture.root);
+  fixtureOutsidePaths.add(fixture.outsidePath);
+  const db = installFixtures([fixture]);
+  useMockProvider(t);
+  PaymentService.resetDeductionCallCount();
+
+  const clientMessageId = "concurrent-retry-idempotency-key";
+  const body = { ...requestBody(projectA), clientMessageId };
+
+  // Pre-consume the claim via an insufficient-credit attempt (402).
+  PaymentService.setNextDeductResult({ success: false, reason: "INSUFFICIENT_CREDITS", remainingCredits: 0 });
+  const denied = await POST(authenticatedRequest(studentA, body));
+  assert.equal(denied.status, 402);
+
+  // Two concurrent retries (now with credits) must bill exactly once in total.
+  const [first, second] = await Promise.all([
+    POST(authenticatedRequest(studentA, body)),
+    POST(authenticatedRequest(studentA, body)),
+  ]);
+  assert.equal(first.status, 200);
+  assert.equal(second.status, 200);
+  assert.equal(
+    PaymentService.getDeductionCallCount(),
+    1,
+    "concurrent retries after a 402 must deduct credits exactly once"
+  );
 });
 
 test("authenticated Student A receives only Project A workspace context", async (t) => {

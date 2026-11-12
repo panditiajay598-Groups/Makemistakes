@@ -36,6 +36,8 @@ type ConversationDocument = Document & {
   technicalMemory: string[];
   messageCount: number;
   implementationPlan?: NovaImplementationPlan;
+  /** clientMessageIds that have already claimed a credit deduction (idempotency). */
+  creditedClientMessageIds?: string[];
   createdAt: Date;
   updatedAt: Date;
 };
@@ -312,6 +314,66 @@ export async function findNovaConversation(
     conversationId,
   });
   return Boolean(conversation);
+}
+
+export async function claimNovaCreditRequest(
+  db: Db,
+  userId: string,
+  problemId: string,
+  conversationId: string,
+  clientMessageId: string
+): Promise<boolean> {
+  // No idempotency key: always bill (can't dedup a keyed request).
+  if (!clientMessageId) return true;
+  // Atomic single-document claim. Only the request whose $addToSet actually
+  // ADDS the clientMessageId (modifiedCount 1) wins the right to deduct. Any
+  // concurrent duplicate / retry sees the id already present (modifiedCount 0)
+  // and is never billed twice. No read-then-charge race remains.
+  const result = await db.collection<ConversationDocument>(CONVERSATIONS).updateOne(
+    { _id: projectKey(userId, problemId), userId, problemId, conversationId },
+    { $addToSet: { creditedClientMessageIds: clientMessageId } }
+  );
+  if (!result.matchedCount) throw Object.assign(new Error("Conversation not found"), { status: 404 });
+  return result.modifiedCount === 1;
+}
+
+/**
+ * Releases a previously-claimed credit request id (atomic $pull). Used as
+ * compensation when a claim is taken but billing does not successfully
+ * complete (insufficient credits, infrastructure failure), so that a later
+ * retry with the same clientMessageId can re-claim and re-bill. A missing id
+ * is a no-op (modifiedCount 0).
+ */
+export async function releaseNovaCreditRequest(
+  db: Db,
+  userId: string,
+  problemId: string,
+  conversationId: string,
+  clientMessageId: string
+): Promise<void> {
+  if (!clientMessageId) return;
+  await db.collection<ConversationDocument>(CONVERSATIONS).updateOne(
+    { _id: projectKey(userId, problemId), userId, problemId, conversationId },
+    { $pull: { creditedClientMessageIds: clientMessageId } }
+  );
+}
+
+export async function hasNovaUserMessage(
+  db: Db,
+  userId: string,
+  problemId: string,
+  conversationId: string,
+  clientMessageId: string
+): Promise<boolean> {
+  if (!clientMessageId) return false;
+  const existing = await db.collection<MessageDocument>(MESSAGES).findOne({
+    userId,
+    problemId,
+    conversationId,
+    role: "user",
+    clientMessageId,
+  });
+  return Boolean(existing);
 }
 
 export type AppendNovaMessageOptions = {

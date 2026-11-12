@@ -276,16 +276,18 @@ async function _ensureWorkspaceInternal(
   }
 
   const verify = verifyWorkspacePackages(root);
+  const readyStatus = verify.ok ? "ready" : "error";
+  const readyErr = verify.ok ? null : verify.message;
   const ready =
-    meta.status === "ready" && !needsInstall
+    meta.status === "ready" && !needsInstall && verify.ok
       ? meta
       : await upsertWorkspaceMeta(
           {
             userId,
             problemId,
-            status: "ready",
+            status: readyStatus,
             envChecks: verify.checks,
-            lastError: null,
+            lastError: readyErr,
           },
           meta
         );

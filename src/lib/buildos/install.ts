@@ -269,26 +269,40 @@ export async function installWorkspaceDependencies(
   try {
     ensureDir(workspaceRoot);
     const parentNm = path.join(process.cwd(), "node_modules");
+    const parentHasNext =
+      fs.existsSync(parentNm) && fs.existsSync(path.join(parentNm, "next"));
 
-    if (fs.existsSync(parentNm) && fs.existsSync(path.join(parentNm, "next"))) {
-      linkNodeModules(parentNm, workspaceRoot, logs);
+    let linked = false;
+    if (parentHasNext) {
+      linked = linkNodeModules(parentNm, workspaceRoot, logs);
     } else {
+      // Provision from the shared cache. A cache failure here is fatal
+      // because there is no parent node_modules to fall back on.
       try {
         const cacheNm = await ensureSharedPackageCache(level, logs);
-        linkNodeModules(cacheNm, workspaceRoot, logs);
+        linked = linkNodeModules(cacheNm, workspaceRoot, logs);
       } catch (err: any) {
-        logs.push(`Shared cache notice (${err.message}); utilizing parent node_modules`);
+        throw new Error(`Dependency provisioning failed: ${err.message}`);
       }
     }
 
+    // The workspace is usable only if the node_modules link succeeded AND the
+    // approved package set verifies. Report an honest failure otherwise.
     const verify = verifyWorkspacePackages(workspaceRoot, level);
+    if (!linked || !verify.ok) {
+      const reason = !verify.ok ? verify.message : "failed to link node_modules";
+      logs.push(reason);
+      return { ok: false, logs, error: reason };
+    }
+
     return {
       ok: true,
       logs: [...logs, verify.message],
       error: undefined,
     };
   } catch (err: any) {
-    logs.push(`Environment notice (${err.message}); cloud runtime active`);
-    return { ok: true, logs, error: undefined };
+    const message = err?.message || String(err);
+    logs.push(`Environment error (${message})`);
+    return { ok: false, logs, error: message };
   }
 }
