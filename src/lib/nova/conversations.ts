@@ -17,6 +17,15 @@ export type NovaConversationMessage = {
   role: "user" | "assistant";
   content: string;
   createdAt: Date;
+  /** Client-supplied idempotency key. Retries reuse it so a user message is never stored twice. */
+  clientMessageId?: string;
+  /** Delivery outcome for assistant messages. Omitted/undefined means a successful answer. */
+  deliveryStatus?: "ok" | "failed";
+  error?: string;
+  /** For assistant messages: the clientMessageId of the user message this response answers. Persisted so Retry survives a page refresh. */
+  linkedClientMessageId?: string;
+  /** Marked true when a later, successful retry supersedes this failed attempt. Kept as history but hidden from the active conversation. */
+  superseded?: boolean;
 };
 
 type ConversationDocument = Document & {
@@ -40,6 +49,11 @@ type MessageDocument = Document & {
   content: string;
   sequence: number;
   createdAt: Date;
+  clientMessageId?: string;
+  deliveryStatus?: "ok" | "failed";
+  error?: string;
+  linkedClientMessageId?: string;
+  superseded?: boolean;
 };
 
 export type NovaConversation = {
@@ -100,6 +114,11 @@ function trimRecentMessages(messages: MessageDocument[]): NovaConversationMessag
       role: message.role,
       content: message.content,
       createdAt: message.createdAt,
+      clientMessageId: message.clientMessageId,
+      deliveryStatus: message.deliveryStatus,
+      error: message.error,
+      linkedClientMessageId: message.linkedClientMessageId,
+      superseded: message.superseded,
     });
     total += message.content.length;
   }
@@ -295,19 +314,43 @@ export async function findNovaConversation(
   return Boolean(conversation);
 }
 
+export type AppendNovaMessageOptions = {
+  clientMessageId?: string;
+  deliveryStatus?: "ok" | "failed";
+  error?: string;
+  linkedClientMessageId?: string;
+  superseded?: boolean;
+};
+
 export async function appendNovaConversationMessage(
   db: Db,
   userId: string,
   problemId: string,
   conversationId: string,
   role: NovaConversationMessage["role"],
-  content: string
+  content: string,
+  options: AppendNovaMessageOptions = {}
 ): Promise<void> {
   const key = projectKey(userId, problemId);
   const conversations = db.collection<ConversationDocument>(CONVERSATIONS);
   const scope = { _id: key, userId, problemId, conversationId };
   const safeContent = sanitizeNovaMessage(content);
-  if (!safeContent) throw Object.assign(new Error("Message content is required"), { status: 400 });
+  if (!safeContent && role === "user") {
+    throw Object.assign(new Error("Message content is required"), { status: 400 });
+  }
+
+  // Idempotency: retries reuse the same clientMessageId, so never store the
+  // same user message twice. This prevents duplicate user messages on retry.
+  if (role === "user" && options.clientMessageId) {
+    const existing = await db.collection<MessageDocument>(MESSAGES).findOne({
+      userId,
+      problemId,
+      conversationId,
+      role: "user",
+      clientMessageId: options.clientMessageId,
+    });
+    if (existing) return;
+  }
 
   const now = new Date();
   const updatedConversation = await conversations.findOneAndUpdate(
@@ -326,6 +369,11 @@ export async function appendNovaConversationMessage(
     content: safeContent,
     sequence: updatedConversation.messageCount,
     createdAt: now,
+    clientMessageId: options.clientMessageId,
+    deliveryStatus: options.deliveryStatus,
+    error: options.error,
+    linkedClientMessageId: options.linkedClientMessageId,
+    superseded: options.superseded,
   });
 
   const notes = getMemoryNote(role, safeContent);
@@ -348,4 +396,24 @@ export async function appendNovaConversationMessage(
       },
     ]);
   }
+}
+
+export async function supersedeFailedNovaAttempts(
+  db: Db,
+  userId: string,
+  problemId: string,
+  conversationId: string,
+  clientMessageId: string
+): Promise<void> {
+  await db.collection<MessageDocument>(MESSAGES).updateMany(
+    {
+      userId,
+      problemId,
+      conversationId,
+      role: "assistant",
+      deliveryStatus: "failed",
+      linkedClientMessageId: clientMessageId,
+    },
+    { $set: { superseded: true } }
+  );
 }

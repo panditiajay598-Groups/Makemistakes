@@ -618,7 +618,14 @@ export default function BuildOS({ problemId, productName: propName, problemData,
   const [applyingProposal, setApplyingProposal] = useState<string | null>(null);
   const [novaMode, setNovaMode] = useState<NovaMode>("UNDERSTAND");
   const [saveError, setSaveError] = useState<string | null>(null);
-  const [novaMessages, setNovaMessages] = useState<Array<{ role: "user" | "assistant"; content: string }>>([
+  const [novaMessages, setNovaMessages] = useState<Array<{
+    role: "user" | "assistant";
+    content: string;
+    clientMessageId?: string;
+    deliveryStatus?: "ok" | "failed";
+    linkedClientMessageId?: string;
+    superseded?: boolean;
+  }>>([
     {
       role: "assistant",
       content: `Welcome to **${workspace.productName}**. I'm Nova, your AI build mentor. Ask me about your current task, or choose Plan, Build, Understand, or Debug to get started.`,
@@ -658,10 +665,24 @@ export default function BuildOS({ problemId, productName: propName, problemData,
                 typeof (message as { content?: unknown }).content === "string"
               )
             )
-            .map((message: { role: "user" | "assistant"; content: string }) => ({
+            .map((message: {
+              role: "user" | "assistant";
+              content: string;
+              deliveryStatus?: "ok" | "failed";
+              clientMessageId?: string;
+              linkedClientMessageId?: string;
+              superseded?: boolean;
+            }) => ({
               role: message.role,
               content: message.content,
-            })));
+              deliveryStatus: message.deliveryStatus,
+              clientMessageId: message.clientMessageId,
+              linkedClientMessageId: message.linkedClientMessageId,
+              superseded: message.superseded,
+            }))
+            // Superseded failed attempts (replaced by a successful retry) are kept
+            // in the database as history but are not shown as active answers.
+            .filter((message: { superseded?: boolean }) => !message.superseded));
         } else {
           setNovaMessages([{
             role: "assistant",
@@ -1422,12 +1443,21 @@ export default function BuildOS({ problemId, productName: propName, problemData,
     }).catch((error) => console.warn("[BuildOS] Could not persist Nova proposal rejection.", error));
   };
 
-  const sendNovaMessage = async (textToSend?: string, modeOverride: NovaMode = novaMode) => {
+  const sendNovaMessage = async (
+    textToSend?: string,
+    modeOverride: NovaMode = novaMode,
+    clientMessageIdOverride?: string
+  ) => {
     const query = textToSend || novaInput;
     if (!query.trim() || novaLoading || !novaConversationReady) return;
 
     shouldAutoScrollChatRef.current = true;
-    const userMsg = { role: "user" as const, content: query.trim() };
+    const clientMessageId = clientMessageIdOverride || (
+      typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+        ? crypto.randomUUID()
+        : `${Date.now()}-${Math.random().toString(36).slice(2)}`
+    );
+    const userMsg = { role: "user" as const, content: query.trim(), clientMessageId };
     setNovaMessages((prev) => [...prev, userMsg]);
     if (!textToSend) setNovaInput("");
     setNovaLoading(true);
@@ -1439,6 +1469,7 @@ export default function BuildOS({ problemId, productName: propName, problemData,
         body: JSON.stringify({
           message: userMsg.content,
           conversationId: activeNovaConversationId,
+          clientMessageId,
           context: {
             problemId,
             activeTaskId: activeMission.id,
@@ -1468,7 +1499,12 @@ export default function BuildOS({ problemId, productName: propName, problemData,
           ? data.implementationPlan as NovaImplementationPlan
           : null;
         if (responsePlan) setImplementationPlan(responsePlan);
-        setNovaMessages((prev) => [...prev, { role: "assistant", content: data.message }]);
+        setNovaMessages((prev) => [...prev, {
+          role: "assistant",
+          content: data.message,
+          deliveryStatus: data.deliveryStatus === "failed" ? "failed" : "ok",
+          linkedClientMessageId: data.deliveryStatus === "failed" ? clientMessageId : undefined,
+        }]);
         const proposals = parseNovaProposals(data.message, novaMessages.length + 1);
         const proposalPlan = responsePlan || implementationPlan;
         const proposalStepId = proposalPlan?.currentStepId;
@@ -1519,13 +1555,20 @@ export default function BuildOS({ problemId, productName: propName, problemData,
           {
             role: "assistant",
             content: "Generating complete code for an entire project exceeded the execution timeout limit. Please ask for one specific file or component at a time (e.g. 'Help me build the navbar' or 'Create the database schema') so I can generate clean, working code for you.",
+            deliveryStatus: "failed",
+            linkedClientMessageId: clientMessageId,
           },
         ]);
       } else {
         const errorMsg = data?.error || data?.message || "I'm having trouble analyzing this step right now. Try asking for a specific component or smaller step.";
         setNovaMessages((prev) => [
           ...prev,
-          { role: "assistant", content: errorMsg },
+          {
+            role: "assistant",
+            content: errorMsg,
+            deliveryStatus: "failed",
+            linkedClientMessageId: clientMessageId,
+          },
         ]);
       }
     } catch {
@@ -1534,11 +1577,29 @@ export default function BuildOS({ problemId, productName: propName, problemData,
         {
           role: "assistant",
           content: "Nova connection timed out. For large requests like generating entire projects, please ask for individual components or files one by one.",
+          deliveryStatus: "failed",
+          linkedClientMessageId: clientMessageId,
         },
       ]);
     } finally {
       setNovaLoading(false);
     }
+  };
+
+  const retryNovaMessage = (linkedClientMessageId: string) => {
+    const failedUser = novaMessages.find((message) =>
+      message.role === "user" && message.clientMessageId === linkedClientMessageId
+    );
+    if (!failedUser || novaLoading) return;
+    // Remove BOTH the failed assistant bubble and the original user bubble, then
+    // re-send the SAME user message with the SAME clientMessageId. The server
+    // dedupes on clientMessageId, so the user message is never stored twice,
+    // and the UI never shows a duplicate user bubble.
+    setNovaMessages((prev) => prev.filter((message) =>
+      !(message.role === "assistant" && message.linkedClientMessageId === linkedClientMessageId)
+      && !(message.role === "user" && message.clientMessageId === linkedClientMessageId)
+    ));
+    void sendNovaMessage(failedUser.content, novaMode, linkedClientMessageId);
   };
 
   const handleCopyCode = () => {
@@ -2592,6 +2653,20 @@ export default function BuildOS({ problemId, productName: propName, problemData,
                       >
                         <NovaMessageContent content={msg.content} omitCodeBlocks={proposals.length > 0} />
                       </div>
+
+                      {msg.role === "assistant" && msg.deliveryStatus === "failed" && msg.linkedClientMessageId && (
+                        <div className="flex items-center justify-between gap-2 rounded-md border border-rose-800/50 bg-rose-950/30 px-2.5 py-1.5 text-[11px] text-rose-200">
+                          <span>Nova&apos;s AI provider was unavailable, so this reply is a local fallback. You can retry to get a full answer.</span>
+                          <button
+                            type="button"
+                            onClick={() => retryNovaMessage(msg.linkedClientMessageId!)}
+                            disabled={novaLoading}
+                            className="shrink-0 rounded border border-rose-700/60 bg-rose-900/40 px-2 py-1 font-medium text-rose-100 transition-colors hover:bg-rose-800/60 disabled:cursor-not-allowed disabled:opacity-50"
+                          >
+                            Retry
+                          </button>
+                        </div>
+                      )}
 
                       {/* Render Interactive Code Proposals */}
                       {proposals.length > 0 && (

@@ -9,6 +9,7 @@ import {
   getOrCreateNovaConversation,
   saveNovaImplementationPlan,
   sanitizeNovaMessage,
+  supersedeFailedNovaAttempts,
 } from "@/lib/nova/conversations";
 import { parseNovaImplementationPlan } from "@/lib/nova/implementationPlan";
 
@@ -513,6 +514,7 @@ export async function POST(req: Request) {
     const lastUser = sanitizeNovaMessage(
       (typeof body.message === "string" ? body.message : legacyUserMessage?.content || "").slice(0, 4_000)
     );
+    const clientMessageId = typeof body.clientMessageId === "string" ? body.clientMessageId.trim().slice(0, 128) : "";
     if (!lastUser.trim()) {
       return NextResponse.json({ ok: false, error: "A user message is required." }, { status: 400 });
     }
@@ -553,7 +555,9 @@ export async function POST(req: Request) {
       );
     }
 
-    await appendNovaConversationMessage(db, userId, problemId, conversation.conversationId, "user", lastUser);
+    await appendNovaConversationMessage(db, userId, problemId, conversation.conversationId, "user", lastUser, {
+      clientMessageId,
+    });
     const conversationWithUserMessage = await getOrCreateNovaConversation(db, userId, problemId);
 
     const difficulty = projectContext.problem.difficulty || projectContext.problem.learning?.level || "Beginner";
@@ -584,6 +588,7 @@ export async function POST(req: Request) {
     let responseText = "";
     let responseMode: "llm" | "local" = "local";
     let responseProvider: LlmProviderConfig["provider"] | undefined;
+    const attemptedProviders = providers.length > 0;
 
     // Try providers in cascade order (Groq 1 -> Groq 2 -> OpenRouter -> OpenAI)
     for (const provider of providers) {
@@ -650,6 +655,20 @@ export async function POST(req: Request) {
       });
     }
 
+    // Failure detection: only when providers were configured but none produced a
+    // real answer do we treat the exchange as failed (the local fallback reply
+    // is shown to the student but is clearly not a successful provider answer).
+    const providerSucceeded = responseMode === "llm";
+    let deliveryStatus: "ok" | "failed" =
+      attemptedProviders && !providerSucceeded ? "failed" : "ok";
+    const failureError = deliveryStatus === "failed"
+      ? "The AI provider was unavailable; a local fallback reply was provided."
+      : undefined;
+    if (!responseText) {
+      responseText = "Nova couldn't generate a response right now. Please try your request again.";
+      deliveryStatus = "failed";
+    }
+
     let implementationPlan = conversationWithUserMessage.implementationPlan;
     if (String(context.mentorMode || "").toUpperCase() === "PLAN") {
       const parsedPlan = parseNovaImplementationPlan(responseText);
@@ -661,7 +680,23 @@ export async function POST(req: Request) {
     }
 
     responseText = sanitizeNovaMessage(responseText);
-    await appendNovaConversationMessage(db, userId, problemId, conversation.conversationId, "assistant", responseText);
+    if (!responseText) {
+      responseText = "Nova generated an empty response. Please try your request again.";
+      deliveryStatus = "failed";
+    }
+    // On a successful retry (reused clientMessageId), supersede the prior failed
+    // attempt so history never shows two competing active assistant answers.
+    if (providerSucceeded && clientMessageId) {
+      await supersedeFailedNovaAttempts(db, userId, problemId, conversation.conversationId, clientMessageId);
+    }
+
+    await appendNovaConversationMessage(db, userId, problemId, conversation.conversationId, "assistant", responseText, {
+      deliveryStatus,
+      error: deliveryStatus === "failed"
+        ? (failureError || "Nova generated an empty or failed response.")
+        : undefined,
+      linkedClientMessageId: clientMessageId || undefined,
+    });
     return NextResponse.json({
       ok: true,
       mode: responseMode,
@@ -669,6 +704,8 @@ export async function POST(req: Request) {
       conversationId: conversation.conversationId,
       implementationPlan,
       message: responseText,
+      deliveryStatus,
+      clientMessageId,
     });
   } catch (err: unknown) {
     const status = typeof err === "object" && err !== null && "status" in err && typeof err.status === "number"
